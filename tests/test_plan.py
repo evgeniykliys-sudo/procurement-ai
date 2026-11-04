@@ -306,6 +306,21 @@ def test_calendar_repeats_orders_within_six_months(make_dataset):
     assert cal["positions"].sum() >= plan.kpi["order_now_positions"]
 
 
+def test_calendar_repeat_below_min_order_moves_to_next_date(make_dataset):
+    # тот же SKU, но минимальный заказ 220 шт.: первый заказ (≈ 234 шт. потребности) проходит → 300;
+    # на первой дате повторного (≈ 21.03) потребность ≈ 200 < 220 → 0 шт.; заказ не пропадает, а
+    # переносится на следующие даты, пока остаток к приходу не упадёт ещё на ≈ 20 шт. (≈ 6 дн.) —
+    # всё ещё март, 220 → партия 100 → 300 шт.
+    ds = build(make_dataset, sku("NOW", stock=0, lead=90))
+    plan = plan_of(ds, Config(min_order_qty=220))
+    r = row(plan, "NOW")
+    assert r["status"] == "order_now" and r["order_qty"] == 300
+    cal = plan.calendar.set_index("month")
+    assert cal.loc["2024-01", "positions"] == 1 and cal.loc["2024-01", "qty"] == 300
+    assert cal.loc["2024-03", "positions"] == 1 and cal.loc["2024-03", "qty"] == 300
+    assert cal.loc["2024-02", "positions"] == 0
+
+
 # --- ABC и уровень сервиса ------------------------------------------------------
 
 def test_abc_by_sales_within_category_sets_service_level(make_dataset):

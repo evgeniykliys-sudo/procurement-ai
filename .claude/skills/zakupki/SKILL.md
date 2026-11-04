@@ -15,11 +15,19 @@ description: План закупок импортного товара — пе�
 - `data/raw/` не изменяй. Секреты (`.env`) не открывай и не печатай.
 - Отвечай по-русски, коротко: сначала ответ, потом расшифровка.
 
+## 0. Python окружения
+
+Команды ниже — для bash (Linux/macOS; Windows — Git Bash). Python проекта: `.venv/bin/python` на Linux/macOS, `.venv/Scripts/python.exe` на Windows. Начинай каждую команду с выбора пути — переменная между вызовами shell не сохраняется:
+
+```bash
+PY=.venv/bin/python; [ -x "$PY" ] || PY=.venv/Scripts/python.exe
+```
+
 ## 1. Пересчитать
 
 ```bash
-.venv/Scripts/python.exe -m procurement run          # с запиской ИИ, если в .env есть DEEPSEEK_API_KEY
-.venv/Scripts/python.exe -m procurement run --no-ai  # без ИИ, быстрее
+$PY -m procurement run          # с запиской ИИ, если в .env есть DEEPSEEK_API_KEY
+$PY -m procurement run --no-ai  # без ИИ, быстрее
 ```
 
 Итог в двух строках печатается в консоль. Пишет `out/plan.json`, `out/diff.json`, `out/backtest.json`, `out/note.json`, `history/<дата>.json`, сайт `site/`. Дата анализа определяется по данным; задать вручную — `--as-of ГГГГ-ММ-ДД`.
@@ -29,7 +37,7 @@ description: План закупок импортного товара — пе�
 Читай `out/plan.json` точечно (файл большой — не выводи целиком), например:
 
 ```bash
-.venv/Scripts/python.exe -c "import json,sys; sys.stdout.reconfigure(encoding='utf-8'); p=json.load(open('out/plan.json',encoding='utf-8')); print(json.dumps([r for r in p['items'] if r['sku_id']=='SKU-026A51'], ensure_ascii=False, indent=1))"
+$PY -c "import json,sys; sys.stdout.reconfigure(encoding='utf-8'); p=json.load(open('out/plan.json',encoding='utf-8')); print(json.dumps([r for r in p['items'] if r['sku_id']=='SKU-026A51'], ensure_ascii=False, indent=1))"
 ```
 
 Что в строке `items[]`:
@@ -56,9 +64,10 @@ description: План закупок импортного товара — пе�
 Все параметры с комментариями — в `config.toml`. Чтобы сравнить, не портя историю и `out/`, считай вариант в отдельные папки:
 
 ```bash
+mkdir -p .cache && rm -rf .cache/history_try   # папки может не быть; старая копия истории не нужна
 cp config.toml .cache/config_try.toml          # затем правь параметр в копии
 cp -r history .cache/history_try
-.venv/Scripts/python.exe -m procurement run --no-ai --config .cache/config_try.toml \
+$PY -m procurement run --no-ai --config .cache/config_try.toml \
   --history .cache/history_try --out .cache/out_try --site .cache/site_try
 ```
 

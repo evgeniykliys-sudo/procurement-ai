@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+import pandas as pd
 import pytest
 
 from procurement.config import Config
@@ -163,8 +164,18 @@ def test_reliability_ignores_receipts_outside_window_or_other_supplier(make_data
     assert r["uplift"] == pytest.approx(1.2)
     # по умолчанию окно 180 дн.: +91 засчитан
     assert rel_of(make_dataset, pos, receipts)["fill_ratio"] == pytest.approx(0.7)
-    assert rel_of(make_dataset, pos, [rec("A", "2025-11-07", 50)])["fill_ratio"] == pytest.approx(0.0)  # +181 — нет
+    assert pd.isna(rel_of(make_dataset, pos, [rec("A", "2025-11-07", 50)])["fill_ratio"])  # +181 — нет
     assert rel_of(make_dataset, pos, [rec("A", "2025-11-06", 50)])["fill_ratio"] == pytest.approx(0.5)  # +180 — да
+
+
+def test_reliability_no_matched_receipts_is_no_data_not_zero(make_dataset):
+    # заказы есть, но ни один приход не сопоставлен (другие SKU / вне окна): доли нет, поправки нет
+    pos = [po("A", supplier="S1", order="2025-01-10", promised="2025-05-10", ordered=100, received=100),
+           po("B", supplier="S1", order="2025-02-10", promised="2025-06-10", ordered=50, received=50)]
+    r = rel_of(make_dataset, pos, [rec("C", "2025-03-01", 100)])
+    assert r["orders_n"] == 2 and r["qty_ordered"] == 150 and r["qty_received"] == 0
+    assert pd.isna(r["fill_ratio"])
+    assert r["uplift"] == 1.0
 
 
 def test_reliability_overlapping_windows_no_double_count(make_dataset):

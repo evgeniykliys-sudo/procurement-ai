@@ -44,10 +44,11 @@ def test_summary_kpi_and_dates(run):
     html, k = run["html"], run["plan"]["kpi"]
     assert "Данные на 13.08.2026" in html
     assert "пересчитано" in html
-    # 7 KPI с разделителями тысяч: 189 поз. / 43 066 шт. / 18 поставщиков / 205 / 84 / 115 / 331
-    assert k["order_now_qty"] == 43066
+    # 7 KPI с разделителями тысяч: 189 поз. / 42 796 шт. / 18 поставщиков / 205 / 84 / 115 / 331
+    # (42 796, а не 43 066: у 3 поставщиков ни один приход не сопоставлен — «нет данных», без поправки ×1.2)
+    assert k["order_now_qty"] == 42796
     tiles = re.findall(r'class="kpi-value">([^<]+)<', html)
-    assert tiles[:7] == ["189", f"43{NBSP}066", "18", "205", "84", "115", "331"]
+    assert tiles[:7] == ["189", f"42{NBSP}796", "18", "205", "84", "115", "331"]
     assert "Календарь заказов" in html and "Что изменилось" in html
     assert "Растут" in html and "Падают" in html
     assert "01.07.2026" in html  # сравнение с прошлым прогоном
@@ -64,7 +65,7 @@ def test_orders_exports_match_plan(run):
     ws = wb.worksheets[0]
     rows = [r for r in ws.iter_rows(min_row=2, values_only=True) if r[1] and str(r[1]).startswith("SKU-")]
     assert len(rows) == len(orders) == 189
-    assert sum(r[4] for r in rows) == 43066
+    assert sum(r[4] for r in rows) == 42796
     with open(exp / "orders_all.csv", encoding="utf-8-sig", newline="") as f:
         csv_rows = [r for r in csv.reader(f, delimiter=";") if r and r[1].startswith("SKU-")]
     assert len(csv_rows) == 189
@@ -74,6 +75,16 @@ def test_orders_exports_match_plan(run):
         assert f'href="exports/{name}"' in run["html"], name
     assert (exp / "plan_all.xlsx").exists()
     assert 'href="exports/orders_all.xlsx"' in run["html"] and 'href="exports/orders_all.csv"' in run["html"]
+
+
+def test_supplier_without_matched_receipts_shows_no_data(run):
+    plan, html = run["plan"], run["html"]
+    rel = {r["supplier_id"]: r for r in plan["reliability"]}
+    no_data = [s for s in {o["supplier_id"] for o in plan["supplier_orders"]}
+               if s in rel and rel[s]["orders_n"] > 0 and rel[s]["fill_ratio"] is None]
+    assert no_data  # на реальных данных такие поставщики есть среди заказов «сейчас»
+    assert "исполнение нет данных" in html
+    assert "исполнение 0%" not in html
 
 
 def test_supplier_weight_summary(run):

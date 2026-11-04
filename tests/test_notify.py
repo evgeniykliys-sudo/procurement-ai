@@ -121,3 +121,53 @@ def test_failure_returns_false_and_never_prints_token(posts, env, caplog, capsys
     assert caplog.text.strip()  # причина записана
     assert TOKEN not in caplog.text + out.out + out.err
     assert "AAH-secret" not in caplog.text + out.out + out.err
+
+
+# --- CLI `python -m procurement notify`: дайджест отдельным шагом после деплоя -------------
+
+def _write_out(tmp_path):
+    import json
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "plan.json").write_text(json.dumps(PLAN, ensure_ascii=False), encoding="utf-8")
+    (out / "diff.json").write_text(json.dumps(DIFF, ensure_ascii=False), encoding="utf-8")
+    return out
+
+
+def test_cli_notify_reads_out_and_links_site_from_env(posts, env, tmp_path):
+    from procurement.__main__ import main
+    out = _write_out(tmp_path)
+    env.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    env.setenv("TELEGRAM_CHAT_ID", CHAT)
+    env.setenv("SITE_URL", SITE)
+    log = posts(FakeResponse())
+    assert main(["notify", "--out", str(out)]) == 0
+    assert len(log) == 1
+    text = log[0]["json"]["text"]
+    assert "13.08.2026" in text and "43 066" in text and "SKU-000002" in text
+    assert f'href="{SITE}"' in text
+
+
+def test_cli_notify_without_secrets_skips_without_error(posts, env, tmp_path):
+    from procurement.__main__ import main
+    out = _write_out(tmp_path)
+    log = posts(FakeResponse())
+    assert main(["notify", "--out", str(out)]) == 0
+    assert log == []
+
+
+def test_cli_notify_failed_send_is_error(posts, env, tmp_path, capsys):
+    from procurement.__main__ import main
+    out = _write_out(tmp_path)
+    env.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    env.setenv("TELEGRAM_CHAT_ID", CHAT)
+    posts(FakeResponse(401, {"ok": False, "description": "Unauthorized"}))
+    assert main(["notify", "--out", str(out)]) == 1
+    captured = capsys.readouterr()
+    assert TOKEN not in captured.out + captured.err
+
+
+def test_cli_notify_without_plan_is_clear_error(env, tmp_path, capsys):
+    from procurement.__main__ import main
+    assert main(["notify", "--out", str(tmp_path / "missing")]) == 2
+    assert "plan.json" in capsys.readouterr().err

@@ -16,22 +16,24 @@
 
 ## Как запустить локально
 
-Нужен Python 3.12.
+Нужен Python 3.12. Команды — для bash (Linux/macOS; на Windows — Git Bash). Python окружения лежит в `.venv/bin/python` (Linux/macOS) или `.venv/Scripts/python.exe` (Windows) — первая строка ниже кладёт нужный путь в `PY`:
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements.txt   # Linux/macOS: .venv/bin/python
-.venv/Scripts/python.exe -m procurement run --no-ai           # расчёт без ИИ, ~5 с
+PY=.venv/bin/python; [ -x "$PY" ] || PY=.venv/Scripts/python.exe
+$PY -m pip install -r requirements.txt
+$PY -m procurement run --no-ai           # расчёт без ИИ, ~5 с
 ```
 
 Дашборд — `site/index.html` (открыть в браузере). Другие режимы:
 
 ```bash
-.venv/Scripts/python.exe -m procurement run                       # с запиской ИИ (ключ в .env)
-.venv/Scripts/python.exe -m procurement run --notify              # + дайджест в Telegram
-.venv/Scripts/python.exe -m procurement run --as-of 2026-07-01    # на прошлую дату (данные обрезаются)
-.venv/Scripts/python.exe -m procurement seed-history              # записать «прошлый» прогон для сравнения
-.venv/Scripts/python.exe -m pytest -q                             # тесты
+$PY -m procurement run                       # с запиской ИИ (ключ в .env)
+$PY -m procurement run --notify              # + дайджест в Telegram
+$PY -m procurement notify                    # только дайджест по уже посчитанному out/
+$PY -m procurement run --as-of 2026-07-01    # на прошлую дату (данные обрезаются)
+$PY -m procurement seed-history              # записать «прошлый» прогон для сравнения
+$PY -m pytest -q                             # тесты
 ```
 
 Новые данные — заменить CSV в `data/raw/` тем же форматом и перезапустить. Ключи для ИИ и Telegram — `cp .env.example .env` и вписать значения (см. [docs/setup.md](docs/setup.md)); без них всё остальное работает.
@@ -53,7 +55,7 @@ data/raw/*.csv ──► data ──► demand ──► plan ──► out/plan
 | `procurement/demand.py` | прогноз спроса на 18 мес: сезонный профиль категории и SKU, уровень, тренд, учёт упущенного спроса (месяцы без остатка) |
 | `procurement/supply.py` | плечо поставки по SKU/поставщику, товар в пути и опоздания, надёжность поставщика (доля привезённого), кратность партии |
 | `procurement/plan.py` | решение по каждому SKU: заказать сейчас / позже / не нужно / пересмотр цены / мёртвый; количество с расшифровкой «почему столько»; заказы по поставщикам; календарь заказов |
-| `procurement/backtest.py` | проверка прогноза на истории: модель против наивного «как год назад» |
+| `procurement/backtest.py` | проверка прогноза на истории: модель против наивного «среднее за последние 12 мес» |
 | `procurement/history.py` | история прогонов и что изменилось с прошлого |
 | `procurement/ai.py` | записка ИИ-аналитика (единственный модуль, говорящий с LLM) |
 | `procurement/site.py` | статический дашборд и выгрузки Excel/CSV |
@@ -98,7 +100,7 @@ GitHub Actions ([`.github/workflows/plan.yml`](.github/workflows/plan.yml)) пе
 - при пуше новых CSV в `data/raw/`;
 - по кнопке **Actions → «План закупок» → Run workflow**.
 
-Каждый прогон публикует дашборд на GitHub Pages, коммитит `history/` (с `[skip ci]`, только если история изменилась) и шлёт дайджест в Telegram: KPI, топ-5 к заказу, новые риски, ссылка на дашборд. Секреты и включение Pages — [docs/setup.md](docs/setup.md).
+Прогон — три job по очереди: `plan` считает план, коммитит `history/` (с `[skip ci]`, только если история изменилась) и собирает сайт; `deploy` публикует дашборд на GitHub Pages; `notify` после публикации шлёт дайджест в Telegram (`python -m procurement notify`: KPI, топ-5 к заказу, новые риски, ссылка на уже обновлённый дашборд). Время «пересчитано» — по Новосибирску. Права у каждого job минимальные, ключ DeepSeek есть только у расчёта, секреты Telegram — только у дайджеста. Секреты и включение Pages — [docs/setup.md](docs/setup.md).
 
 ## ИИ-слой
 

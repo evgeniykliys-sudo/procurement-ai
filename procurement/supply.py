@@ -114,7 +114,8 @@ def supplier_reliability(ds: Dataset, cfg: Config, as_of: date) -> pd.DataFrame:
     (см. `_received_by_receipts`). Ниже `cfg.reliability_min_ratio` — поправка на недовоз
     uplift = 1 / доля, не больше `cfg.reliability_max_uplift`; иначе 1.
 
-    Колонки: supplier_id, fill_ratio (NaN — нет истории), orders_n, uplift, qty_ordered, qty_received.
+    Колонки: supplier_id, fill_ratio (NaN — нет истории или ни один приход не сопоставлен с заказами:
+    «нет данных», uplift = 1), orders_n, uplift, qty_ordered, qty_received.
     """
     cutoff = as_of - timedelta(days=cfg.reliability_min_age_days)
     po = ds.po[ds.po["status"].isin(CLOSED_STATUSES) & (ds.po["order_date"] <= cutoff)
@@ -129,13 +130,14 @@ def supplier_reliability(ds: Dataset, cfg: Config, as_of: date) -> pd.DataFrame:
     agg["orders_n"] = agg["orders_n"].fillna(0).astype("int64")
     agg["qty_ordered"] = agg["qty_ordered"].fillna(0).astype("int64")
     agg["qty_received"] = agg["qty_received"].fillna(0).astype("int64")
-    ratio = agg["qty_received"] / agg["qty_ordered"].where(agg["qty_ordered"] > 0)
+    # ни одного сопоставленного прихода — данных нет (а не «исполнение 0%»): доля NaN, поправка 1
+    ratio = (agg["qty_received"] / agg["qty_ordered"].where(agg["qty_ordered"] > 0)).where(agg["qty_received"] > 0)
     agg["fill_ratio"] = ratio
 
     def _uplift(r: float) -> float:
         if pd.isna(r) or r >= cfg.reliability_min_ratio:
             return 1.0
-        return cfg.reliability_max_uplift if r <= 0 else float(min(1.0 / r, cfg.reliability_max_uplift))
+        return float(min(1.0 / r, cfg.reliability_max_uplift))
 
     agg["uplift"] = ratio.map(_uplift).astype("float64")
     return agg.reset_index()[["supplier_id", "fill_ratio", "orders_n", "uplift", "qty_ordered", "qty_received"]]

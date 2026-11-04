@@ -352,16 +352,21 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         explain["excess_qty"] = _r1(excess_qty) if "excess" in risk else 0.0
 
         # календарь (B2): первый заказ, затем повторные — тот же расчёт на следующую дату, когда
-        # остаток с учётом уже запланированных приходов опустится до страхового, пока дата в окне
+        # остаток с учётом уже запланированных приходов опустится до страхового, пока дата в окне;
+        # повторный на эту дату вышел 0 шт. (меньше минимального заказа) — следующая дата пересечения
         if order_qty > 0:
             d, q = (0 if status == "order_now" else (order_by - as_of).days), order_qty
             p2, c2 = proj.copy(), cum_arr[i].copy()
-            while q > 0 and d < cal_days:
-                schedule.append((str(pd.Period(as_of + timedelta(days=d), "M")), q))
-                a = min(d + L, D)
-                p2[a:] += max(0.0, -p2[a]) + q   # недостача к приходу потеряна; приход заказа
-                c2[a:] += q
-                t = next_cross(i, p2, a + 1)
+            while d < cal_days:
+                if q > 0:
+                    schedule.append((str(pd.Period(as_of + timedelta(days=d), "M")), q))
+                    a = min(d + L, D)
+                    p2[a:] += max(0.0, -p2[a]) + q   # недостача к приходу потеряна; приход заказа
+                    c2[a:] += q
+                    start = a + 1
+                else:
+                    start = d + L + 1
+                t = next_cross(i, p2, start)
                 if t is None:
                     break
                 d = t - L

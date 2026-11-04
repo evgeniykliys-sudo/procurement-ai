@@ -27,6 +27,7 @@ TEMPLATES = HERE / "templates"
 STATIC = HERE / "static"
 NBSP = " "
 NO_SUPPLIER = "—"
+NO_DATA = "нет данных"  # доля исполнения поставщика не посчитана: ни один приход не сопоставлен с заказами
 TOP_TREND_N = 10
 TOP_TREND_MIN_HISTORY = 24  # тренд = последние 12 мес / предыдущие 12 — нужен 2-летний ряд
 
@@ -120,9 +121,11 @@ def fmt_datetime(v) -> str:
 
 
 def fmt_pct(v, digits=0, signed=False, dash="—") -> str:
-    """Доля → проценты: 0.564 → «56%»."""
+    """Доля → проценты: 0.564 → «56%»; строка (например, «нет данных») — как есть."""
     if v is None:
         return dash
+    if isinstance(v, str):
+        return v
     x = float(v) * 100
     s = f"{x:+.{digits}f}" if signed else f"{x:.{digits}f}"
     return s.replace("-", "−").replace(".", ",") + "%"
@@ -236,7 +239,9 @@ def _supplier_groups(plan: dict, items_by_id: dict, reliability: dict) -> list[d
             arrival_first=min(r["expected_arrival"] for r in rows),
             arrival_last=max(r["expected_arrival"] for r in rows),
             deficit=sum(1 for r in rows if "deficit_unavoidable" in (r["item"].get("risk") or [])),
-            fill_ratio=rel["fill_ratio"] if rel else None,
+            # заказы были, а сопоставленных приходов нет — «нет данных», а не 0%
+            fill_ratio=(rel["fill_ratio"] if rel["fill_ratio"] is not None
+                        else NO_DATA if rel.get("orders_n") else None) if rel else None,
             low_reliability=bool(rel and rel["uplift"] and rel["uplift"] > 1.0),
             file=export_name(g["supplier_id"]), anchor="sup-" + _slug(g["supplier_id"]),
         )

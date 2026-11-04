@@ -1,4 +1,4 @@
-"""CLI: `python -m procurement run [...]` и `python -m procurement seed-history`."""
+"""CLI: `python -m procurement run [...]`, `seed-history` и `notify` (дайджест по готовому out/)."""
 from __future__ import annotations
 
 import argparse
@@ -70,6 +70,26 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_notify(args) -> int:
+    """Дайджест по уже посчитанному прогону (out/plan.json, out/diff.json) — в Actions после деплоя
+    сайта, чтобы ссылка вела на обновлённый дашборд. Без секретов Telegram — пропуск, не ошибка."""
+    cfg = load_config(args.config)
+    out_dir = Path(args.out)
+    plan_path = out_dir / "plan.json"
+    if not plan_path.exists():
+        raise ValueError(f"нет {plan_path.as_posix()} — сначала `python -m procurement run`")
+    plan_json = json.loads(plan_path.read_text(encoding="utf-8"))
+    diff_path = out_dir / "diff.json"
+    diff = json.loads(diff_path.read_text(encoding="utf-8")) if diff_path.exists() else {}
+    if not (ai.read_secret("TELEGRAM_BOT_TOKEN") and ai.read_secret("TELEGRAM_CHAT_ID")):
+        notify.send_digest(plan_json, diff, cfg.site_url)  # пишет в лог, каких переменных нет
+        print("Дайджест: не отправлен — секреты Telegram не заданы.")
+        return 0
+    sent = notify.send_digest(plan_json, diff, cfg.site_url)
+    print(f"Дайджест по данным на {plan_json.get('as_of')}: {'отправлен' if sent else 'НЕ отправлен'}.")
+    return 0 if sent else 1
+
+
 def cmd_seed_history(args) -> int:
     cfg = load_config(args.config)
     plan_json, _, _ = compute_plan(args.raw, cfg, SEED_AS_OF)
@@ -98,6 +118,10 @@ def main(argv=None) -> int:
     r.set_defaults(func=cmd_run)
     s = sub.add_parser("seed-history", parents=[common], help=f"прошлый прогон на {SEED_AS_OF}")
     s.set_defaults(func=cmd_seed_history)
+    n = sub.add_parser("notify", help="дайджест в Telegram по готовому прогону из --out")
+    n.add_argument("--config", default="config.toml", help="файл параметров")
+    n.add_argument("--out", default="out", help="папка результатов расчёта (plan.json, diff.json)")
+    n.set_defaults(func=cmd_notify)
     args = p.parse_args(argv)
     try:
         return args.func(args)
