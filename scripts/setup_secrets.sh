@@ -35,7 +35,24 @@ cat <<'TXT'
   2) Придумайте имя и логин бота (логин заканчивается на bot).
   3) BotFather пришлёт токен вида 123456789:AA... — скопируйте его.
 TXT
-read_secret TG_TOKEN "Вставьте токен бота (ввод не отображается)"
+echo "  Вставка в окне cmd — правой кнопкой мыши (Ctrl+V там может не сработать)."
+TG_OK=""
+for attempt in 1 2 3; do
+  read_secret TG_TOKEN "Вставьте токен бота (ввод не отображается)"
+  TG_TOKEN="$(printf '%s' "$TG_TOKEN" | tr -d '[:space:]')"   # пробелы и \r от вставки
+  if [[ ! "$TG_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then
+    echo "  Это не похоже на токен (нужен вид 123456789:AA..., символов: ${#TG_TOKEN}). Попробуйте ещё раз."
+    continue
+  fi
+  ME="$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$TG_TOKEN" | curl -sS -m 15 -K - || true)"
+  if [[ "$ME" == *'"ok":true'* ]]; then
+    echo "  Токен принят: бот @$(printf '%s' "$ME" | grep -oE '"username":"[^"]+"' | cut -d'"' -f4)"
+    TG_OK=1; break
+  fi
+  echo "  Telegram не принял токен (ответ: $(printf '%s' "$ME" | grep -oE '"description":"[^"]+"' | cut -d'"' -f4)). Попробуйте ещё раз."
+done
+unset ME
+[[ -n "$TG_OK" ]] || die "токен не принят за 3 попытки"
 
 # --- 2. chat id ---
 say "Шаг 2. Chat id"
