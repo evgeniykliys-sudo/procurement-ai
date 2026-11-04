@@ -47,13 +47,13 @@ $PY -c "import json,sys; sys.stdout.reconfigure(encoding='utf-8'); p=json.load(o
 
 Как читать `explain` («почему столько»):
 1. `forecast_horizon` — прогноз спроса на период, который покрывает заказ (от прихода через `lead_days` ещё на `cover_target_days`).
-2. `+ safety` — страховой запас (уровень сервиса по ABC, `z`, `sigma_monthly`; не больше потолка).
+2. `+ safety` — страховой запас: √(`safety_cover`² + `safety_lead`²) — части окна покрытия и окна плеча, каждая по сезону своего окна (уровень сервиса по ABC, `z`, `sigma_monthly`), не больше `safety_cap` (2 мес. спроса периода покрытия).
 3. `− stock_at_arrival` — что останется к приходу: `stock` + `transit_lead` (придёт до заказа) − `forecast_lead` (продастся до прихода), не меньше нуля.
 4. `− transit` — что ещё придёт по открытым заказам внутри покрываемого периода.
-5. `= gross`, затем `× uplift` (поправка на недовоз поставщика), округление до партии `lot` (`lot_source`: «партия», «шаг», «потолок») → `final`, он же `order_qty`.
+5. `= gross`, затем `× uplift` (поправка на недовоз поставщика), округление до партии `lot` (`lot_source`: «партия», «шаг», «потолок»; `typical_lot` — медиана приходов, до неё округляем, только если это добавляет ≤ 1 мес. спроса) → `final`, он же `order_qty`. `merged_until_review` — следующий заказ, который понадобился бы раньше пересмотра и вошёл в этот.
 Справочно: `arrival` — когда придёт заказ, размещённый сегодня; `days_short` и `lost_lead` — сколько дней и штук спроса будет потеряно до прихода; `excess_qty` — штук сверх нормы.
 
-По поставщику: строки `items` с этим `supplier_id`, его заказ — `supplier_orders`, надёжность — `reliability` (`fill_ratio` — доля привезённого, `uplift` — поправка), просрочки — `stale_po`, ожидаемые приходы — `arrivals`. Что изменилось с прошлого прогона — `out/diff.json` (`new_orders`, `dropped_orders`, `changed`, `new_risks`). Пояснения ИИ к рисковым SKU — `out/note.json` → `sku_notes` (это текст, числа сверяй с `plan.json`). Точность прогноза по категориям — `out/backtest.json` (`wape_model` против `wape_naive`, меньше — лучше).
+По поставщику: строки `items` с этим `supplier_id`, его заказ — `supplier_orders`, надёжность — `reliability` (`fill_ratio` — доля привезённого, `uplift` — поправка), просрочки — `stale_po`, ожидаемые приходы — `arrivals`. Что изменилось с прошлого прогона — `out/diff.json` (`new_orders`, `dropped_orders`, `changed`, `new_risks`). Пояснения ИИ к рисковым SKU — `out/note.json` → `sku_notes` (это текст, числа сверяй с `plan.json`). Точность прогноза — `out/backtest.json`: главное — `wape_sku_model` против `wape_sku_naive` (ошибка по SKU, меньше — лучше), по сумме категории — `wape_model` / `wape_naive`; `new_sku_actual` — продажи новинок после среза, в оценку не входят.
 
 ## 3. Собрать заказ поставщику
 
