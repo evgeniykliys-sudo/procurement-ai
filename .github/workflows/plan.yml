@@ -1,0 +1,84 @@
+# План закупок: расчёт → дашборд на GitHub Pages → история прогонов → дайджест в Telegram.
+# Запуск: каждый день в 00:00 UTC (07:00 по Новосибирску), при пуше новых CSV в data/raw/ и кнопкой
+# «Run workflow» на вкладке Actions. Секреты — Settings → Secrets and variables → Actions
+# (DEEPSEEK_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID); без них расчёт и сайт работают,
+# записки ИИ и дайджеста не будет. Петли нет: бот коммитит только history/ и с [skip ci],
+# а пуш-триггер смотрит только на data/raw/**.
+name: План закупок
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  push:
+    branches: [main, master]
+    paths:
+      - "data/raw/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: procurement-plan
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Зависимости
+        run: pip install -r requirements.txt
+
+      - name: Кеш записки ИИ (тот же вход — без повторного запроса)
+        uses: actions/cache@v4
+        with:
+          path: .cache/ai
+          key: ai-note-${{ github.run_id }}
+          restore-keys: ai-note-
+
+      - name: Расчёт, сайт, дайджест
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: python -m procurement run --notify
+
+      - name: Коммит истории прогонов
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add history/
+          if git diff --cached --quiet; then
+            echo "История не изменилась — коммит не нужен."
+          else
+            git commit -m "history: прогон $(date -u +%Y-%m-%d) [skip ci]"
+            git pull --rebase --autostash
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
