@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 
 from . import ai, notify, site
-from .backtest import run_backtest
+from .backtest import mark_weak_forecast, run_backtest
 from .config import load_config
 from .data import DataError, cut_dataset, detect_as_of, load_dataset
 from .demand import build_demand
@@ -32,6 +32,9 @@ def compute_plan(raw, cfg, as_of: date | None = None) -> tuple[dict, object, obj
     ds_full = load_dataset(raw)
     data_as_of = detect_as_of(ds_full, replace(cfg, as_of=None))
     as_of = as_of or cfg.as_of or data_as_of
+    if as_of > data_as_of:  # остатка и продаж на эту дату в выгрузке нет — расчёт был бы на нулях
+        raise ValueError(f"дата анализа {as_of.isoformat()} позже данных выгрузки ({data_as_of.isoformat()}): "
+                         "уберите as_of из config.toml или укажите дату не позже данных")
     ds = cut_dataset(ds_full, as_of) if as_of < data_as_of else ds_full
     demand = build_demand(ds, cfg, as_of)
     plan = build_plan(ds, demand, cfg, as_of)
@@ -44,6 +47,7 @@ def cmd_run(args) -> int:
     as_of = date.fromisoformat(args.as_of) if args.as_of else None
     plan_json, ds_full, cfg = compute_plan(args.raw, cfg, as_of)
     backtest = run_backtest(ds_full, cfg)
+    mark_weak_forecast(plan_json, backtest)
     hist_dir, out_dir = Path(args.history), Path(args.out)
     prev = previous_run(hist_dir, plan_json["as_of"])
     diff = diff_runs(plan_json, prev, cfg)

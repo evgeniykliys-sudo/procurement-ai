@@ -21,7 +21,7 @@
 - у SKU с историей ≥ 12 мес прогноз на ближайшие 12 мес не выше `forecast_cap_vs_last_year` ×
   продажи последних 12 мес: иначе уровень (и весь ряд) уменьшается пропорционально, флаг;
 - тренд — уровень последних 12 мес / уровень предыдущих 12, в границах `trend_clip`
-  (если и в предыдущих 12 мес сезона достаточно);
+  (если и в предыдущих 12 мес сезона достаточно), в степени `trend_damping` (затухание);
 - прогноз месяца = уровень × тренд × коэффициент месяца; первый месяц — доля оставшихся дней.
 """
 from __future__ import annotations
@@ -288,7 +288,7 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
                 and n_per >= 2 * LEVEL_WINDOW and _enough_season(qc[i, prev], idx_t[prev], min_idx)):
             l_prev = _level(qc[i, prev], idx_t[prev])
             if base > 0 and not np.isnan(l_prev) and l_prev > 0:
-                trend = float(np.clip(base / l_prev, lo, hi))
+                trend = float(np.clip(base / l_prev, lo, hi)) ** cfg.trend_damping
 
         # потолок: год прогноза ≤ N× продаж последних 12 мес (кроме новинок) — уровень уменьшается,
         # весь ряд прогноза масштабируется пропорционально, сезонная форма та же

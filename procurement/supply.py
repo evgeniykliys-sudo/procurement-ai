@@ -45,7 +45,8 @@ def in_transit(ds: Dataset, cfg: Config, as_of: date) -> tuple[pd.DataFrame, pd.
     - просрочка больше → не учитываются, идут в `stale` («уточнить у поставщика»).
 
     arrivals: sku_id, po_id, supplier_id, eta (date), qty, late (bool), promised_date
-    stale: po_id, sku_id, supplier_id, promised_date, qty_pending, days_overdue
+    stale: po_id, sku_id, supplier_id, promised_date, qty_pending, days_overdue, received_after_order
+    (шт. этого SKU от того же поставщика, пришедших после даты заказа: ≥ qty_pending — вероятно, получен)
     """
     po = ds.po[(ds.po["status"] == "open") & (ds.po["qty_pending"] > 0) & (ds.po["order_date"] <= as_of)].copy()
     overdue = po["promised_date"].map(lambda d: (as_of - d).days)
@@ -67,6 +68,12 @@ def in_transit(ds: Dataset, cfg: Config, as_of: date) -> tuple[pd.DataFrame, pd.
     arrivals = arrivals.sort_values(["eta", "sku_id"], kind="stable").reset_index(drop=True)
 
     old = po[~(on_time | grace)]
+    # подсказка: сколько этого SKU пришло от того же поставщика после даты заказа (до as_of) — если
+    # не меньше, чем числится в пути, заказ, скорее всего, уже получен, а в ERP не закрыт
+    rc = ds.receipts[ds.receipts["receipt_date"] < as_of]
+    after = [int(rc.loc[(rc["sku_id"] == r.sku_id) & (rc["receipt_date"] >= r.order_date)
+                        & ((rc["supplier_id"] == r.supplier_id) if isinstance(r.supplier_id, str) else True),
+                        "qty"].sum()) for r in old.itertuples()]
     stale = pd.DataFrame({
         "po_id": old["po_id"].to_numpy(dtype=object),
         "sku_id": old["sku_id"].to_numpy(dtype=object),
@@ -74,6 +81,7 @@ def in_transit(ds: Dataset, cfg: Config, as_of: date) -> tuple[pd.DataFrame, pd.
         "promised_date": old["promised_date"].to_numpy(dtype=object),
         "qty_pending": old["qty_pending"].astype("int64").to_numpy(),
         "days_overdue": overdue[old.index].astype("int64").to_numpy(),
+        "received_after_order": pd.Series(after, dtype="int64").to_numpy(),
     }).sort_values("days_overdue", ascending=False, kind="stable").reset_index(drop=True)
     return arrivals, stale
 
@@ -114,22 +122,29 @@ def supplier_reliability(ds: Dataset, cfg: Config, as_of: date) -> pd.DataFrame:
     (см. `_received_by_receipts`). Ниже `cfg.reliability_min_ratio` — поправка на недовоз
     uplift = 1 / доля, не больше `cfg.reliability_max_uplift`; иначе 1.
 
-    Колонки: supplier_id, fill_ratio (NaN — нет истории или ни один приход не сопоставлен с заказами:
-    «нет данных», uplift = 1), orders_n, uplift, qty_ordered, qty_received.
+    Заказ, к которому не сопоставлен ни один приход, в долю не входит (D09): это не «недовоз 100%»,
+    а «нет данных» — заказ мог быть отменён самим закупщиком или приход записан на другой код.
+    Иначе было бы непоследовательно: поставщик, у которого не сопоставлено ничего, — «нет данных»,
+    а у которого не сопоставлена половина заказов, — «везёт половину».
+
+    Колонки: supplier_id, fill_ratio (NaN — нет ни одного заказа с сопоставленным приходом:
+    «нет данных», uplift = 1), orders_n (заказов в оценке), orders_matched (из них с приходами),
+    uplift, qty_ordered, qty_received (по заказам с приходами).
     """
     cutoff = as_of - timedelta(days=cfg.reliability_min_age_days)
     po = ds.po[ds.po["status"].isin(CLOSED_STATUSES) & (ds.po["order_date"] <= cutoff)
                & ds.po["supplier_id"].notna()].copy()
     po["got"] = _received_by_receipts(po, ds.receipts[ds.receipts["receipt_date"] < as_of],
                                       cfg.reliability_receipt_window_days)
-    agg = po.groupby("supplier_id").agg(orders_n=("qty_ordered", "size"), qty_ordered=("qty_ordered", "sum"),
-                                         qty_received=("got", "sum"))
+    po["matched"] = po["got"] > 0
+    po["ordered_m"] = po["qty_ordered"].where(po["matched"], 0)
+    agg = po.groupby("supplier_id").agg(orders_n=("qty_ordered", "size"), orders_matched=("matched", "sum"),
+                                         qty_ordered=("ordered_m", "sum"), qty_received=("got", "sum"))
     ids = pd.Index(pd.unique(pd.concat([ds.suppliers["supplier_id"], ds.po["supplier_id"].dropna(),
                                         ds.sku["supplier_id"].dropna()], ignore_index=True)), name="supplier_id")
     agg = agg.reindex(ids)
-    agg["orders_n"] = agg["orders_n"].fillna(0).astype("int64")
-    agg["qty_ordered"] = agg["qty_ordered"].fillna(0).astype("int64")
-    agg["qty_received"] = agg["qty_received"].fillna(0).astype("int64")
+    for col in ("orders_n", "orders_matched", "qty_ordered", "qty_received"):
+        agg[col] = agg[col].fillna(0).astype("int64")
     # ни одного сопоставленного прихода — данных нет (а не «исполнение 0%»): доля NaN, поправка 1
     ratio = (agg["qty_received"] / agg["qty_ordered"].where(agg["qty_ordered"] > 0)).where(agg["qty_received"] > 0)
     agg["fill_ratio"] = ratio
@@ -140,7 +155,8 @@ def supplier_reliability(ds: Dataset, cfg: Config, as_of: date) -> pd.DataFrame:
         return float(min(1.0 / r, cfg.reliability_max_uplift))
 
     agg["uplift"] = ratio.map(_uplift).astype("float64")
-    return agg.reset_index()[["supplier_id", "fill_ratio", "orders_n", "uplift", "qty_ordered", "qty_received"]]
+    return agg.reset_index()[["supplier_id", "fill_ratio", "orders_n", "orders_matched", "uplift",
+                              "qty_ordered", "qty_received"]]
 
 
 def _round_lot(median: float, steps) -> int:

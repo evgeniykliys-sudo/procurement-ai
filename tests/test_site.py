@@ -44,11 +44,13 @@ def test_summary_kpi_and_dates(run):
     html, k = run["html"], run["plan"]["kpi"]
     assert "Данные на 13.08.2026" in html
     assert "пересчитано" in html
-    # 7 KPI с разделителями тысяч: 189 поз. / 42 796 шт. / 18 поставщиков / 205 / 84 / 115 / 331
-    # (42 796, а не 43 066: у 3 поставщиков ни один приход не сопоставлен — «нет данных», без поправки ×1.2)
-    assert k["order_now_qty"] == 42796
+    # 7 KPI с разделителями тысяч: 188 поз. / 34 379 шт. / 18 поставщиков / 206 / 82 / 115 / 331
+    # (до правок D07–D11 было 42 796 шт.: страховой без сезона, партия до медианы прихода, недовоз
+    # по несопоставленным заказам)
+    assert k["order_now_qty"] == 34379
     tiles = re.findall(r'class="kpi-value">([^<]+)<', html)
-    assert tiles[:7] == ["189", f"42{NBSP}796", "18", "205", "84", "115", "331"]
+    assert tiles[:7] == ["188", f"34{NBSP}379", "18", "206", "82", "115", "331"]
+    assert "127 уже на нуле" in html  # из 206 «дефицит неизбежен» остатка нет уже сейчас
     assert "Календарь заказов" in html and "Что изменилось" in html
     assert "Растут" in html and "Падают" in html
     assert "01.07.2026" in html  # сравнение с прошлым прогоном
@@ -64,11 +66,11 @@ def test_orders_exports_match_plan(run):
     wb = load_workbook(exp / "orders_all.xlsx")
     ws = wb.worksheets[0]
     rows = [r for r in ws.iter_rows(min_row=2, values_only=True) if r[1] and str(r[1]).startswith("SKU-")]
-    assert len(rows) == len(orders) == 189
-    assert sum(r[4] for r in rows) == 42796
+    assert len(rows) == len(orders) == 188
+    assert sum(r[4] for r in rows) == 34379
     with open(exp / "orders_all.csv", encoding="utf-8-sig", newline="") as f:
         csv_rows = [r for r in csv.reader(f, delimiter=";") if r and r[1].startswith("SKU-")]
-    assert len(csv_rows) == 189
+    assert len(csv_rows) == 188
     for sup in {o["supplier_id"] for o in orders}:
         name = "orders_no_supplier.xlsx" if sup == "—" else f"orders_{sup}.xlsx"
         assert (exp / name).exists(), name
@@ -89,8 +91,8 @@ def test_supplier_without_matched_receipts_shows_no_data(run):
 
 def test_supplier_weight_summary(run):
     html = run["html"]
-    # SUP-0F93EC: вес заведён у 2 позиций из 3 (17 580 + 165 кг)
-    assert f"≥{NBSP}17{NBSP}745 кг, без учёта 1 поз." in html
+    # SUP-0F93EC: вес заведён у 2 позиций из 3 (21 096 + 192.5 кг)
+    assert f"≥{NBSP}21{NBSP}288 кг, без учёта 1 поз." in html
     assert "вес не заведён" in html
     assert "поставщик не заведён" in html
 

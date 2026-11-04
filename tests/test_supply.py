@@ -173,9 +173,21 @@ def test_reliability_no_matched_receipts_is_no_data_not_zero(make_dataset):
     pos = [po("A", supplier="S1", order="2025-01-10", promised="2025-05-10", ordered=100, received=100),
            po("B", supplier="S1", order="2025-02-10", promised="2025-06-10", ordered=50, received=50)]
     r = rel_of(make_dataset, pos, [rec("C", "2025-03-01", 100)])
-    assert r["orders_n"] == 2 and r["qty_ordered"] == 150 and r["qty_received"] == 0
+    assert r["orders_n"] == 2 and r["orders_matched"] == 0
+    assert r["qty_ordered"] == 0 and r["qty_received"] == 0  # в долю входят только заказы с приходами
     assert pd.isna(r["fill_ratio"])
     assert r["uplift"] == 1.0
+
+
+def test_reliability_unmatched_order_is_no_data_not_underdelivery(make_dataset):
+    # D09: заказ A привезён наполовину, к заказу B не сопоставлен ни один приход (отменён или записан
+    # на другой код) — B в долю не входит: 50 / 100, а не 50 / 200
+    pos = [po("A", supplier="S1", order="2025-01-10", promised="2025-05-10", ordered=100),
+           po("B", supplier="S1", order="2025-02-10", promised="2025-06-10", ordered=100)]
+    r = rel_of(make_dataset, pos, [rec("A", "2025-05-01", 50)])
+    assert r["orders_n"] == 2 and r["orders_matched"] == 1
+    assert r["qty_ordered"] == 100 and r["qty_received"] == 50
+    assert r["fill_ratio"] == pytest.approx(0.5) and r["uplift"] == pytest.approx(1.2)
 
 
 def test_reliability_overlapping_windows_no_double_count(make_dataset):
@@ -200,3 +212,13 @@ def test_lot_rounding_from_config(make_dataset):
     assert lot_size(ds)["A"] == 40
     assert lot_size(ds, Config())["A"] == 40
     assert lot_size(ds, Config(lot_rounding=((1000, 25), (float("inf"), 100))))["A"] == 25
+
+
+def test_stale_po_shows_receipts_after_order(make_dataset):
+    # заказ просрочен на 339 дн., но после даты заказа от того же поставщика пришло ровно столько же:
+    # в «уточнить у поставщика» — с подсказкой «вероятно, получен»
+    pos = [po("A", supplier="S1", status="open", order="2025-09-08", promised="2025-09-08",
+              ordered=1000, received=0, pending=1000)]
+    ds = make_dataset(po=pos, receipts=[rec("A", "2026-04-15", 1000), rec("A", "2025-01-01", 70)])
+    _, stale = in_transit(ds, Config(), date(2026, 8, 13))
+    assert stale.loc[0, "received_after_order"] == 1000

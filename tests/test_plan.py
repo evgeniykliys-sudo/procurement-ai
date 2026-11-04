@@ -93,7 +93,7 @@ def test_explain_adds_up_to_order_qty_manual_example(make_dataset):
     assert e["forecast_horizon"] == pytest.approx(100 / 31 + 100 + 100 * 29 / 31, abs=0.06)
     # σ = max(0 ошибок, √100) = 10; один SKU в категории → A; z(95%)·10·√(150/30)
     assert r["abc"] == "A"
-    assert e["safety"] == pytest.approx(Z["A"] * 10 * 5 ** 0.5, abs=0.06)
+    assert e["safety"] == pytest.approx(Z["A"] * 10 * 5 ** 0.5, rel=0.005)  # окна по дням: месяцы разной длины
     assert (e["transit"], e["uplift"], e["lot"]) == (50, 1.0, 100)  # приход 15.04 — в (L; L+R]
     assert e["gross"] == pytest.approx(e["forecast_horizon"] + e["safety"] - e["stock_at_arrival"] - 50, abs=1e-6)
     # 196.8 + 36.8 − 3.2 − 50 = 180.4 → вверх до партии 100 → 200
@@ -331,7 +331,7 @@ def test_abc_by_sales_within_category_sets_service_level(make_dataset):
     for s, q in (("A1", 800), ("B1", 150), ("C1", 50)):
         r = row(plan, s)
         sigma = q ** 0.5  # ровный ряд: σ = √уровня
-        assert r["safety_stock"] == pytest.approx(Z[r["abc"]] * sigma * 5 ** 0.5, abs=0.06)
+        assert r["safety_stock"] == pytest.approx(Z[r["abc"]] * sigma * 5 ** 0.5, rel=0.01)  # окна по дням и округление до 0.1
 
 
 def test_unknown_supply_type_marks_lead_as_estimated(make_dataset):
@@ -399,3 +399,33 @@ def test_calendar_month_of_as_of_equals_order_now(make_dataset):
     cal = plan.calendar.set_index("month")
     assert cal.loc["2024-01", "positions"] == plan.kpi["order_now_positions"] == 2
     assert cal.loc["2024-02", "positions"] == 0
+
+
+# --- сезонный страховой (D07) и предел округления до партии (D08) ----------------
+
+def test_seasonal_safety_follows_season_of_coverage_window(make_dataset):
+    # «обогреватель»: 1000 шт. в октябре, 20 — в остальные месяцы. Заказ сегодня (01.01) придёт
+    # 31.03 и покроет апрель–май, где спрос ≈ 20/мес: страховой не больше 2 мес. спроса периода
+    # покрытия (≈ 40), а не z·σ_года·√5 (σ по году с октябрьским пиком — сотни штук)
+    peaks = iter([1000, 1000, 3000])  # последний пик втрое выше — σ за 12 мес большая
+    q = [next(peaks) if m == 10 else 20 for m in list(range(1, 13)) * 3]
+    ds = build(make_dataset, sku("HEAT", qtys=q, stock=0, lead=90, lot_qty=500))
+    r = row(plan_of(ds), "HEAT")
+    e = r["explain"]
+    assert r["status"] == "order_now"
+    assert e["safety"] <= 2 * e["forecast_horizon"] / 2 + 0.5  # потолок: 2 мес. спроса покрытия (R = 60 дн.)
+    old_formula = Z["A"] * r["sigma_monthly"] * 5 ** 0.5   # прежний z·σ·√((L+R)/30)
+    assert r["sigma_monthly"] > 50 and e["safety"] < 0.2 * old_formula
+    # партия 500 при потребности ≈ 125 добавила бы ≈ 4 мес. спроса — округление шагом, а не до 500
+    assert e["lot_source"] == "шаг" and r["order_qty"] < 500
+
+
+def test_lot_rounding_limited_to_one_month_of_demand(make_dataset):
+    # 100 шт./мес, типичная партия 500 (≤ половины годового): потребность ≈ 234 → до 500 — это +2.7 мес.
+    # спроса сверх нужного → шаг 50 → 250; при пределе 3 мес. — партия 500
+    ds = build(make_dataset, sku("L", qty=100, stock=0, lead=90, lot_qty=500))
+    r = row(plan_of(ds), "L")
+    assert r["explain"]["typical_lot"] == 500
+    assert r["explain"]["lot_source"] == "шаг" and r["order_qty"] == 250
+    r3 = row(plan_of(ds, Config(lot_max_overage_months=3)), "L")
+    assert r3["explain"]["lot_source"] == "партия" and r3["order_qty"] == 500

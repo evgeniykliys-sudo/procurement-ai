@@ -69,6 +69,19 @@ jobs:
             git push
           fi
 
+      - name: Не дать GitHub выключить расписание
+        # GitHub отключает cron в репозитории без коммитов 60 дней. Пока выгрузка не меняется, история
+        # не коммитится — раз в 50 дней пустой коммит (с [skip ci]; пуш-триггер смотрит только data/raw/).
+        run: |
+          age=$(( $(date +%s) - $(git log -1 --format=%ct) ))
+          if [ "$age" -gt $(( 50 * 86400 )) ]; then
+            git commit --allow-empty -m "keepalive: расписание активно [skip ci]"
+            git pull --rebase --autostash
+            git push
+          else
+            echo "Последний коммит $(( age / 86400 )) дн. назад — не нужно."
+          fi
+
       - name: Сайт для GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:

@@ -29,6 +29,7 @@ class Config:
     reliability_min_age_days: int = 180
     reliability_receipt_window_days: int = 180
     trend_clip: tuple = (0.5, 1.5)
+    trend_damping: float = 0.5
     new_sku_months: int = 6
     partial_day: int = 13
     shrink_min_months: int = 24
@@ -38,9 +39,11 @@ class Config:
     forecast_cap_vs_last_year: float = 2.0
     forecast_months: int = 18
     lot_rounding: tuple = ((100, 10), (1000, 50), (float("inf"), 100))
+    lot_max_overage_months: float = 1
     dead_months: int = 12
     change_threshold_pct: float = 20
     as_of: date | None = None
+    backtest_months: int = 12
     llm_model: str = "deepseek-chat"
     llm_base_url: str = "https://api.deepseek.com"
     llm_timeout_s: int = 60

@@ -2,14 +2,18 @@
 
 Политика — order-up-to с ежемесячным пересмотром (спецификация, истории 11–22):
 - горизонт = плечо L + покрытие R (`target_cover_days`, если > 0, иначе `default_cover_days`);
-- страховой запас = z(уровень сервиса ABC) × σ × √((L+R)/30), σ устойчивая — 1.25 × среднее
-  |продажи − уровень × сезонный коэффициент| по нецензурированным месяцам последних 12 (не ниже
-  √уровня), страховой ≤ `safety_cap_months` средних месяцев прогноза на горизонте (D04);
+- страховой запас (D04, D07) = √(покрытие² + плечо²): покрытие = z(уровень сервиса ABC) ×
+  σ_окна × √(R/30) по окну покрытия, плечо = z × σ_окна × √(L/30) по окну плеча; σ устойчивая —
+  1.25 × среднее |продажи − уровень × сезонный коэффициент| по нецензурированным месяцам
+  последних 12 (не ниже √уровня), в каждом окне масштабируется его сезоном (спрос окна / средний
+  за год); страховой ≤ `safety_cap_months` месяцев спроса периода покрытия. У ровного спроса это
+  прежнее z × σ × √((L+R)/30);
 - потребность (D06: спрос до прихода при нулевом остатке потерян и не дозаказывается) =
   прогноз(L..L+R) + страховой − остаток к приходу − в пути с приходом в (L; L+R], где
   остаток к приходу = max(0, остаток + в пути до L − прогноз(0..L));
   > 0 → × поправка на недовоз, вверх до кратности партии — медианы приходов, если она не больше
-  половины годового прогноза, иначе до шага `lot_rounding` по величине заказа (D05);
+  половины годового прогноза и округление добавляет не больше `lot_max_overage_months` мес. спроса
+  (D05, D08), иначе до шага `lot_rounding` по величине заказа;
 - проекция остатка по дням (прогноз месяца — равномерно по его дням; приходы в пути — в дату
   прихода) даёт «хватит до» (день, когда потеряно ≥ `stockout_min_lost_qty` шт. спроса; дефицит
   неизбежен — если столько теряется до as_of + L) и «заказать до»: дата, когда остаток опустится ниже страхового
@@ -202,12 +206,36 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
     e_days = min(_days_until(as_of, cfg.excess_cover_months), D)
     y_days = min(_days_until(as_of, 12), D)
     fc_year = cum_dem[:, y_days]
-    # страховой (D04): z·σ·√(H/30), но не больше safety_cap_months средних месяцев прогноза на горизонте
-    h_idx = np.minimum(horizon, D)
-    month_fc = cum_dem[np.arange(n), h_idx] / (horizon / 30.0)
-    safety = np.minimum(z * sigma * np.sqrt(horizon / 30.0), cfg.safety_cap_months * month_fc)
-    # партия (D05): медиана приходов, если она есть и не больше половины годового прогноза
+    # страховой (D04, D07) для заказа с приходом в день t — две части, каждая по сезону своего окна:
+    # покрытие (t; t+R] и плечо [t−L; t). σ — разброс месяца среднего уровня; в окне он
+    # масштабируется отношением спроса окна к среднему за год (у обогревателя с приходом в феврале
+    # разброс не октябрьский), не ниже пуассоновского √(уровень × отношение). Итог — √(покрытие² +
+    # плечо²), не больше `safety_cap_months` месяцев спроса периода покрытия. У ровного спроса —
+    # прежнее z·σ·√((L+R)/30). Страховой — постоянный уровень: и заказ после дефицита восстанавливает
+    # его целиком, иначе следующий заказ остаётся без защиты от ошибки прогноза на плече.
+    t_idx = np.arange(D + 1)[None, :]
+    year_rate = fc_year / max(y_days, 1)
+    base_lvl = np.maximum(per["base_monthly"].fillna(0).astype(float).to_numpy(), 0.0)
+
+    def _window_part(lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        days = hi - lo
+        dem = np.take_along_axis(cum_dem, hi, axis=1) - np.take_along_axis(cum_dem, lo, axis=1)
+        rate = dem / np.maximum(days, 1)
+        ratio = np.where(year_rate[:, None] > EPS, rate / np.where(year_rate > EPS, year_rate, 1.0)[:, None], 1.0)
+        sig = np.maximum(sigma[:, None] * ratio, np.sqrt(base_lvl[:, None] * ratio))
+        return z[:, None] * sig * np.sqrt(days / 30.0), rate * 30.0
+
+    cov_hi = np.minimum(t_idx + cover_target[:, None], D)
+    s_cover, cover_month = _window_part(np.broadcast_to(t_idx, cov_hi.shape).copy(), cov_hi)
+    lead_lo = np.maximum(t_idx - lead[:, None], 0)
+    s_lead, _ = _window_part(lead_lo, np.broadcast_to(t_idx, lead_lo.shape).copy())
+    safety_cap = cfg.safety_cap_months * cover_month
+    safety_t = np.minimum(np.sqrt(s_cover ** 2 + s_lead ** 2), safety_cap)   # [n, D+1]
+
+    # партия (D05): медиана приходов, если она есть и не больше половины годового прогноза;
+    # округление до неё — только если добавляет не больше `lot_max_overage_months` мес. спроса (D08)
     use_lot = (lots > 1) & (lots <= LOT_MAX_YEAR_SHARE * fc_year)
+    lot_slack = cfg.lot_max_overage_months * fc_year / 12.0
     dead_flag = flag_no_sales(cfg)
     late_skus = set(arrivals.loc[arrivals["late"], "sku_id"]) | set(stale["sku_id"])
     transit_total = arrivals.groupby("sku_id")["qty"].sum()
@@ -218,7 +246,7 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
     def next_cross(i: int, proj: np.ndarray, start: int) -> int | None:
         """Первый день t ≥ start, когда проекция ниже страхового и не поднимается до t + R."""
         R = int(cover_target[i])
-        below = proj < safety[i] - EPS
+        below = proj < safety_t[i] - EPS
         for t in np.flatnonzero(below[start:D_fc]) + start:
             if below[t:min(t + R, D) + 1].all():
                 return int(t)
@@ -238,25 +266,49 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         at_arrival = max(0.0, _r1(st + t_lead - f_lead))
         f_h = _r1(cum_dem[i, end] - cum_dem[i, a])
         tr = int(round(carr[end] - carr[a]))
-        saf = _r1(safety[i])
+        saf = _r1(safety_t[i, a])
         gross = round(f_h + saf - at_arrival - tr, 1)
         qty = gross * uplift[i]
-        lot = int(lots[i]) if use_lot[i] else _step_for(qty, cfg.lot_rounding)
-        lot_source = "партия" if use_lot[i] else "шаг"
+        by_lot = bool(use_lot[i]) and _round_lot(qty, int(lots[i])) - qty <= lot_slack[i] + EPS
+        lot = int(lots[i]) if by_lot else _step_for(qty, cfg.lot_rounding)
+        lot_source = "партия" if by_lot else "шаг"
         # потолок (F3): не больше прогноза за excess_cover_months от даты заказа, но не меньше 1 шт.
         cap = int(math.floor(max(1.0, cum_dem[i, min(d + e_days, D)] - cum_dem[i, d]) + EPS))
         final = _round_lot(qty, lot) if gross >= cfg.min_order_qty and gross > 0 else 0
         if final > cap:
             final, lot_source = cap, "потолок"
-        return {"forecast_horizon": f_h, "safety": saf, "stock_at_arrival": at_arrival, "transit": tr,
+        return {"forecast_horizon": f_h, "safety": saf, "safety_cover": _r1(s_cover[i, a]),
+                "safety_lead": _r1(s_lead[i, a]), "safety_cap": _r1(safety_cap[i, a]),
+                "typical_lot": int(lots[i]), "stock_at_arrival": at_arrival, "transit": tr,
                 "gross": gross, "uplift": float(round(uplift[i], 4)), "lot": lot, "final": final,
                 "lot_source": lot_source, "cap": cap,
                 "stock": st, "transit_lead": t_lead, "forecast_lead": f_lead,
                 "at": (as_of + timedelta(days=d)).isoformat(), "arrival": (as_of + timedelta(days=a)).isoformat(),
                 "horizon_days": L + R, "z": float(round(z[i], 4)), "sigma_monthly": _r1(sigma[i])}
 
+    def orders_from(i: int, d: int, q: int, proj: np.ndarray) -> list[tuple[int, int]]:
+        """Заказы SKU в окне календаря: первый (день d, q шт.) и повторные — [(день, шт.)]."""
+        L = int(lead[i])
+        p2, c2 = proj.copy(), cum_arr[i].copy()
+        out = []
+        while d < cal_days:
+            if q > 0:
+                out.append((d, q))
+                a = min(d + L, D)
+                p2[a:] += max(0.0, -p2[a]) + q   # недостача к приходу потеряна; приход заказа
+                c2[a:] += q
+                start = a + 1
+            else:
+                start = d + L + 1
+            t = next_cross(i, p2, start)
+            if t is None:
+                break
+            d = t - L
+            q = int(need_at(i, d, p2, c2)["final"])
+        return out
+
     rows, series = [], {}
-    schedule: list[tuple[str, int]] = []   # (месяц, шт.) всех заказов на 6 мес — для календаря
+    schedule: list[tuple] = []   # (месяц, шт., sku_id, день) всех заказов на 6 мес — для календаря
     for i, sid in enumerate(ids):
         raw_flags = per["flags"].iloc[i]
         flags = list(raw_flags) if isinstance(raw_flags, list) else []
@@ -353,24 +405,21 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
 
         # календарь (B2): первый заказ, затем повторные — тот же расчёт на следующую дату, когда
         # остаток с учётом уже запланированных приходов опустится до страхового, пока дата в окне;
-        # повторный на эту дату вышел 0 шт. (меньше минимального заказа) — следующая дата пересечения
+        # повторный на эту дату вышел 0 шт. (меньше минимального заказа) — следующая дата пересечения.
+        # «Заказать сейчас» покрывает всё до следующего пересмотра: повторный заказ с датой не позже
+        # `review_period_days` (сезон набирает ход, а каждый заказ покрывает R дн.) — в этот же заказ (D11)
         if order_qty > 0:
-            d, q = (0 if status == "order_now" else (order_by - as_of).days), order_qty
-            p2, c2 = proj.copy(), cum_arr[i].copy()
-            while d < cal_days:
-                if q > 0:
-                    schedule.append((str(pd.Period(as_of + timedelta(days=d), "M")), q))
-                    a = min(d + L, D)
-                    p2[a:] += max(0.0, -p2[a]) + q   # недостача к приходу потеряна; приход заказа
-                    c2[a:] += q
-                    start = a + 1
-                else:
-                    start = d + L + 1
-                t = next_cross(i, p2, start)
-                if t is None:
-                    break
-                d = t - L
-                q = int(need_at(i, d, p2, c2)["final"])
+            d0 = 0 if status == "order_now" else (order_by - as_of).days
+            seq = orders_from(i, d0, order_qty, proj)
+            if status == "order_now":
+                extra = sum(q for d, q in seq[1:] if d <= cfg.review_period_days)
+                if extra > 0:
+                    order_qty += extra
+                    explain["merged_until_review"] = int(extra)
+                    explain["final"] = order_qty
+                    seq = orders_from(i, 0, order_qty, proj)
+            for d, q in seq:
+                schedule.append((str(pd.Period(as_of + timedelta(days=d), "M")), q, sid, d))
 
         p = per.iloc[i]
         num = lambda col, default=0: p[col] if pd.notna(p[col]) else default
@@ -380,7 +429,7 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
             "stockout_date": as_of + timedelta(days=stockout_t) if stockout_t is not None else None,
             "cover_days": stockout_t, "stock_now": int(stock[i]), "in_transit_qty": tr_total,
             "next_eta": next_eta.get(sid), "lead_days": L, "lead_source": lt["lead_source"].iloc[i],
-            "cover_target_days": R, "safety_stock": _r1(safety[i]),
+            "cover_target_days": R, "safety_stock": explain["safety"],
             "demand_horizon": _r1(cum_dem[i, min(int(horizon[i]), D)]),
             "reliability_uplift": float(round(uplift[i], 4)),
             "markup_12m": None if np.isnan(mk) else float(mk),
@@ -437,14 +486,16 @@ def _supplier_orders(items: pd.DataFrame, as_of: date) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def _calendar(schedule: list[tuple[str, int]], month0: pd.Period) -> pd.DataFrame:
-    """Позиций и штук к заказу по месяцам (ближайшие 6) из расписания заказов: «сейчас» — месяц
-    даты анализа, «позже» и повторные заказы — месяц даты заказа с количеством на ту дату."""
+def _calendar(schedule: list[tuple], month0: pd.Period) -> pd.DataFrame:
+    """Позиций (разных SKU) и штук к заказу по месяцам (ближайшие 6) из расписания заказов
+    `(месяц, шт., sku_id, день)`: «сейчас» — месяц даты анализа, «позже» и повторные заказы — месяц
+    даты заказа с количеством на ту дату. Два заказа одного SKU в месяце (сезон набирает ход, а
+    каждый заказ покрывает R дн.) — одна позиция, штуки складываются."""
     rows = []
     for k in range(CALENDAR_MONTHS):
         m = str(month0 + k)
-        qs = [q for mm, q in schedule if mm == m]
-        rows.append({"month": m, "positions": len(qs), "qty": int(sum(qs))})
+        hits = [(q, sid) for mm, q, sid, _ in schedule if mm == m]
+        rows.append({"month": m, "positions": len({sid for _, sid in hits}), "qty": int(sum(q for q, _ in hits))})
     return pd.DataFrame(rows, columns=["month", "positions", "qty"])
 
 
@@ -463,6 +514,8 @@ def _kpi(items, orders, arrivals, stale, rel) -> dict:
         "ok": int((st == "ok").sum()),
         "no_demand": int((st == "no_demand").sum()),
         "deficit_unavoidable": has("deficit_unavoidable"),
+        "deficit_unavoidable_out_now": int((items["risk"].map(lambda x: "deficit_unavoidable" in x)
+                                            & (items["stock_now"] <= 0)).sum()),
         "deficit_if_late": has("deficit_if_late"),
         "excess": has("excess"),
         "late_po": has("late_po"),
@@ -479,6 +532,8 @@ def _kpi(items, orders, arrivals, stale, rel) -> dict:
         "in_transit_future_qty": int(arrivals.loc[~arrivals["late"].astype(bool), "qty"].sum()),
         "late_lines": int(arrivals["late"].astype(bool).sum()),
         "stale_po_lines": int(len(stale)),
+        "stale_po_likely_received": int((stale["received_after_order"] >= stale["qty_pending"]).sum())
+        if "received_after_order" in stale else 0,
         "low_reliability_suppliers": int((rel["uplift"] > 1.0).sum()),
     }
 

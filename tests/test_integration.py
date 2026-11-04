@@ -76,6 +76,10 @@ def test_calendar_supplier_labels_and_slow_orders(real_run):
     # календарь с повторными заказами: за 6 мес позиций не меньше, чем «заказать сейчас»
     assert len(plan["calendar"]) == 6
     assert plan["calendar"][0]["positions"] == k["order_now_positions"]
+    # D11: повторный заказ раньше следующего пересмотра входит в «заказать сейчас» — месяц даты
+    # анализа в календаре совпадает с заказом сейчас и по штукам
+    assert plan["calendar"][0]["qty"] == k["order_now_qty"]
+    assert any((r["explain"] or {}).get("merged_until_review") for r in plan["items"])
     assert sum(m["positions"] for m in plan["calendar"]) >= k["order_now_positions"]
     # поставщик не заведён — метка вместо null
     so = plan["supplier_orders"]

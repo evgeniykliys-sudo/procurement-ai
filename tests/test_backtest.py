@@ -40,3 +40,23 @@ def test_backtest_real_data_seasonal_categories(real_ds):
     for cat in ("space_heaters", "string_trimmers"):
         assert cats[cat]["wape_model"] < cats[cat]["wape_naive"], cat
     assert all(len(v) == 12 for v in bt["series"].values())
+
+
+def test_backtest_bounds_forecast_by_availability_and_skips_new_skus(make_dataset):
+    # S продавался по 100/мес, но с 2025-08 остатка нет и продаж нет: модель не «ошибается» на
+    # месяцах без товара (прогноз продаж = min(спрос, остаток + приходы) = 0, D10);
+    # NEW заведён после среза — его продажи не прогнозирует никто, они показаны отдельно
+    sales = make_dataset.series("S", "2021-08", [100] * 48 + [0] * 12, category="flat")
+    sales += make_dataset.series("NEW", "2025-10", [50] * 10, category="flat")
+    stock = [{"sku_id": "S", "month": "2024-01", "stock_qty": 500}]
+    ds = make_dataset(sales=sales, stock=stock)
+    bt = run_backtest(ds, Config(), cut=date(2025, 8, 1), months=12)
+    flat = bt["by_category"][0]
+    assert flat["model"] == 0 and flat["actual"] == 0 and flat["new_sku_actual"] == 500
+    assert bt["total"]["excluded_sku_months"] == 12
+
+
+def test_backtest_cut_moves_with_data(make_dataset):
+    sales = make_dataset.series("F", "2021-01", [100] * 60, category="flat")  # до 2025-12
+    bt = run_backtest(make_dataset(sales=sales), Config())
+    assert bt["cut"] == "2025-01-01" and bt["months"] == 12  # дата анализа 2026-01-01 − 12 мес

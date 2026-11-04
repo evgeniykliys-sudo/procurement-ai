@@ -283,16 +283,18 @@
     var e = r.explain || {}, R = r.cover_target_days, Lt = r.lead_days;
     var lotText = e.lot_source === "партия" ? "до кратности партии " + n0(e.lot) + " шт. (медиана приходов SKU)"
       : e.lot_source === "потолок" ? "не больше прогноза на " + (cfg.excess_cover_months || 12) + " мес (" + n0(e.cap) + " шт.)"
-      : "до шага " + n0(e.lot) + " шт." + (e.lot_source === "шаг" && (r.flags || []).indexOf("партия больше годового спроса") >= 0 ? " — партия больше годового спроса" : "");
+      : "до шага " + n0(e.lot) + " шт." + (e.lot_source === "шаг" && (r.flags || []).indexOf("партия больше годового спроса") >= 0 ? " — партия больше годового спроса"
+        : e.lot_source === "шаг" && e.typical_lot > 1 ? " — до типичной партии " + n0(e.typical_lot) + " шт. не округляем: добавило бы больше " + n0(cfg.lot_max_overage_months || 1) + " мес. спроса" : "");
     var rows = [
       exRow("", "Прогноз спроса на окне покрытия", "от прихода заказа " + fdate(e.arrival) + " ещё R = " + n0(R) + " дн.", n1(e.forecast_horizon)),
-      exRow("+", "Страховой запас", "z = " + (e.z === null || e.z === undefined ? "—" : e.z.toFixed(2).replace(".", ",")) + " · σ = " + n1(e.sigma_monthly) + " шт./мес · √((L + R) / 30), L + R = " + n0(e.horizon_days) + " дн.", n1(e.safety)),
+      exRow("+", "Страховой запас", "z = " + (e.z === null || e.z === undefined ? "—" : e.z.toFixed(2).replace(".", ",")) + " · σ = " + n1(e.sigma_monthly) + " шт./мес по сезону окон: √(покрытие " + n1(e.safety_cover) + "² + плечо " + n1(e.safety_lead) + "²)" + (e.safety_cap !== undefined && e.safety <= e.safety_cap + 0.05 && Math.sqrt(Math.pow(e.safety_cover || 0, 2) + Math.pow(e.safety_lead || 0, 2)) > e.safety_cap + 0.05 ? ", не больше " + n0(cfg.safety_cap_months || 2) + " мес. спроса покрытия = " + n1(e.safety_cap) : ""), n1(e.safety)),
       exRow("−", "Остаток к приходу заказа", "max(0; остаток " + n0(e.stock) + " + в пути до прихода " + n0(e.transit_lead) + " − прогноз до прихода " + n1(e.forecast_lead) + ")", n1(e.stock_at_arrival)),
       exRow("−", "В пути с приходом в окно покрытия", "", n0(e.transit)),
       exRow("=", "Потребность", "", n1(e.gross), "sub")
     ];
     if (e.uplift && e.uplift !== 1) rows.push(exRow("×", "Поправка на недовоз поставщика", "доля исполнения ниже " + Math.round((cfg.reliability_min_ratio || 0.95) * 100) + "%", "×" + n1(e.uplift)));
     rows.push(exRow("⌈⌉", "Округление", esc(lotText), ""));
+    if (e.merged_until_review) rows.push(exRow("+", "Следующий заказ до пересмотра", "по расчёту он понадобился бы раньше, чем через " + n0(cfg.review_period_days || 30) + " дн. (спрос растёт к сезону) — заказываем сразу", n0(e.merged_until_review)));
     rows.push(exRow("=", e.excluded ? "К заказу (исключено)" : "К заказу", e.excluded ? esc(e.excluded) : (r.status === "order_later" ? "оценка на " + fdate(e.at) : ""), n0(e.final) + " шт.", "total"));
     var extra = "";
     if (e.lost_lead > 0) extra += '<div class="callout red">До прихода заказа товара не будет ≈ ' + n0(e.days_short) + " дн., потеряно ≈ " + n0(e.lost_lead) + " шт. Эти продажи не дозаказываются — заказ закрывает только окно после прихода. Чтобы не терять продажи: местный поставщик или ускоренная доставка.</div>";

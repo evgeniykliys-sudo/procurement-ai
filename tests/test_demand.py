@@ -131,7 +131,7 @@ def test_trend_is_ratio_of_last_12_to_previous_12_clipped(make_dataset):
     sales += make_dataset.series("G", "2024-08", [10] * 12 + [12] * 12, category="sanitary_faucets")
     sales += make_dataset.series("X", "2024-08", [10] * 12 + [30] * 12, category="sanitary_faucets")
     sales += make_dataset.series("D", "2024-08", [10] * 12 + [2] * 12, category="sanitary_faucets")
-    cfg = Config(shrink_min_months=36)  # профиль — только категорийный (ровный)
+    cfg = Config(shrink_min_months=36, trend_damping=1.0)  # профиль — только категорийный (ровный)
     res = build_demand(make_dataset(sales=sales), cfg, date(2026, 8, 1))
     assert per(res, "G")["trend"] == pytest.approx(1.2, abs=0.02)
     assert per(res, "X")["trend"] == 1.5
@@ -139,11 +139,15 @@ def test_trend_is_ratio_of_last_12_to_previous_12_clipped(make_dataset):
     # прогноз = уровень × тренд × сезон
     fc = res.forecast[res.forecast["sku_id"] == "G"].set_index("period")["qty"]
     assert fc[pd.Period("2026-09", "M")] == pytest.approx(12 * 1.2, rel=0.03)
+    # затухание (по умолчанию 0.5): тренд^0.5 — рост прошлого года переносится не целиком
+    damped = build_demand(make_dataset(sales=sales), Config(shrink_min_months=36), date(2026, 8, 1))
+    assert per(damped, "X")["trend"] == pytest.approx(1.5 ** 0.5)
+    assert per(damped, "D")["trend"] == pytest.approx(0.5 ** 0.5)
 
 
 def test_trend_clip_comes_from_config(make_dataset):
     sales = make_dataset.series("X", "2024-08", [10] * 12 + [30] * 12, category="sanitary_faucets")
-    res = build_demand(make_dataset(sales=sales), Config(trend_clip=(0.8, 1.2)), date(2026, 8, 1))
+    res = build_demand(make_dataset(sales=sales), Config(trend_clip=(0.8, 1.2), trend_damping=1.0), date(2026, 8, 1))
     assert per(res, "X")["trend"] == 1.2
 
 
