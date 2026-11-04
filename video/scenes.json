@@ -597,10 +597,11 @@
     },
     {
       "id": "s21_run_workflow",
-      "type": "desktop",
-      "screen": "Запись экрана: GitHub → Actions → «План закупок» → Run workflow; прогон plan → deploy → notify; открыть опубликованный дашборд",
-      "placeholder": "Здесь будет запись: GitHub Actions → «Run workflow» → plan, deploy, notify",
-      "text": "Регулярный запуск: на вкладке Actions — Run workflow, или прогон идёт сам каждое утро. Через пару минут на GitHub Pages уже обновлённый дашборд."
+      "type": "browser",
+      "screen": "Браузер: GitHub → Actions → прогон «План закупок» (plan → deploy → notify), запущенный по кнопке",
+      "text": "Регулярный запуск: на вкладке Actions — Run workflow, или прогон идёт сам каждое утро. Через пару минут на GitHub Pages уже обновлённый дашборд.",
+      "url": "https://github.com/evgeniykliys-sudo/procurement-ai/actions/runs/41839726792",
+      "cursor": false
     },
     {
       "id": "s22_digest",
