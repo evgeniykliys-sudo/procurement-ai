@@ -1,0 +1,649 @@
+{
+  "fps": 20,
+  "width": 1920,
+  "height": 1080,
+  "voice": "ru-RU-DmitryNeural",
+  "rate": "+10%",
+  "tail": 0.5,
+  "site": "site/index.html",
+  "scenes": [
+    {
+      "id": "s01_intro",
+      "type": "title",
+      "screen": "Титульная карточка: название, задача, подход тремя пунктами",
+      "text": "Меня зовут Евгений, это решение тестового задания по планированию закупок. Импортёр возит инструмент, садовую технику и сантехнику из Китая, товар едет четыре–шесть месяцев, и каждый месяц закупщик решает, что, сколько и когда заказывать. Мой подход: числа считает детерминированный Python, ИИ объясняет уже посчитанное, а Claude Code — и среда разработки, и интерфейс закупщика.",
+      "html": "<div class='eyebrow'>Тестовое задание · планирование закупок</div><h1>ИИ-система планирования закупок</h1><p class='lead'>Импорт из Китая, плечо 4–6 месяцев: что, сколько и когда заказывать</p><div class='cols3'><div class='box rv'><b>Python</b><span>считает все числа: прогноз, заказ, риски</span></div><div class='box rv'><b>ИИ (DeepSeek)</b><span>объясняет посчитанное, чисел не меняет</span></div><div class='box rv'><b>Claude Code</b><span>среда разработки и интерфейс закупщика</span></div></div>",
+      "actions": [
+        {
+          "at": "@детерминированный",
+          "do": "reveal",
+          "index": 0
+        },
+        {
+          "at": "@ИИ объясняет",
+          "do": "reveal",
+          "index": 1
+        },
+        {
+          "at": "@Claude Code —",
+          "do": "reveal",
+          "index": 2
+        }
+      ]
+    },
+    {
+      "id": "s02_summary",
+      "type": "browser",
+      "url": "site/index.html#summary",
+      "screen": "Дашборд, вкладка «Сводка»: строка решения, KPI, заказы поставщикам, календарь; прокрутка к «Что изменилось»",
+      "text": "Это дашборд по выгрузке ERP на {as_of_words}: {skus_total} SKU в шести категориях. Главное решение — в верхней строке: заказать сейчас {order_now_positions} {w_positions}, {order_now_qty} {w_qty}; поставщиков — {order_now_suppliers}. Ниже — дефициты, излишки, пересмотр цены и мёртвый ассортимент. Справа календарь заказов на шесть месяцев вперёд. А внизу — что изменилось с прошлого прогона.",
+      "actions": [
+        {
+          "at": "@Главное",
+          "do": "highlight",
+          "selector": ".decision",
+          "dur": 3.5
+        },
+        {
+          "at": "@дефициты",
+          "do": "highlight",
+          "selector": ".kpis",
+          "dur": 2.8
+        },
+        {
+          "at": "@календарь",
+          "do": "highlight",
+          "selector": "#chart-calendar",
+          "dur": 3.0,
+          "closest": ".card"
+        },
+        {
+          "at": "@внизу",
+          "do": "scroll",
+          "selector": "text=Что изменилось",
+          "offset": -140,
+          "dur": 1.6
+        },
+        {
+          "at": "@внизу",
+          "do": "highlight",
+          "selector": "text=Что изменилось",
+          "dur": 3.0,
+          "closest": ".card",
+          "delay": 1.7
+        }
+      ]
+    },
+    {
+      "id": "s03_orders",
+      "type": "browser",
+      "url": "site/index.html#summary",
+      "screen": "Вкладка «К заказу»: заказ первого поставщика, кнопка «Скачать Excel»",
+      "text": "Закупщик размещает заказ поставщику, а не по одной позиции. Поэтому здесь заказы по поставщикам: количество уже кратно партии, дата размещения, ожидаемый приход и доля исполнения прошлых заказов. Каждый заказ выгружается в Excel одной кнопкой.",
+      "actions": [
+        {
+          "at": 0.02,
+          "do": "click",
+          "selector": ".tab[data-tab=orders]"
+        },
+        {
+          "at": "@здесь",
+          "do": "highlight",
+          "selector": "[id^=sup-]",
+          "dur": 5.0
+        },
+        {
+          "at": "@Excel",
+          "do": "cursor",
+          "selector": "#panel-orders .btn-primary"
+        },
+        {
+          "at": "@Excel",
+          "do": "highlight",
+          "selector": "#panel-orders .btn-primary",
+          "dur": 2.5,
+          "delay": 0.6
+        }
+      ]
+    },
+    {
+      "id": "s04_sku",
+      "type": "browser",
+      "url": "site/index.html#orders",
+      "screen": "Карточка SKU: график продаж/прогноза/остатка, блок «Почему столько» с прокруткой",
+      "text": "Любую позицию можно открыть: продажи, прогноз с сезонностью, проекция остатка и приход нового заказа. Главное — блок «почему столько». Прогноз на окне покрытия, плюс страховой запас, минус то, что останется к приходу, минус то, что уже едет. Затем поправка на недовоз поставщика и округление до партии.",
+      "actions": [
+        {
+          "at": 0.02,
+          "do": "hash",
+          "value": "sku=SKU-67717F"
+        },
+        {
+          "at": "@продажи",
+          "do": "highlight",
+          "selector": "#sku-body canvas",
+          "dur": 3.5,
+          "closest": "div"
+        },
+        {
+          "at": "@Прогноз на",
+          "do": "highlight",
+          "selector": "text=Прогноз спроса на окне",
+          "dur": 1.8,
+          "closest": "tr"
+        },
+        {
+          "at": "@плюс страховой",
+          "do": "highlight",
+          "selector": "text=Страховой запас",
+          "dur": 1.8,
+          "closest": "tr"
+        },
+        {
+          "at": "@останется",
+          "do": "highlight",
+          "selector": "text=Остаток к приходу",
+          "dur": 1.8,
+          "closest": "tr"
+        },
+        {
+          "at": "@уже едет",
+          "do": "highlight",
+          "selector": "text=В пути с приходом",
+          "dur": 1.5,
+          "closest": "tr"
+        },
+        {
+          "at": "@поправка",
+          "do": "highlight",
+          "selector": "text=Поправка на недовоз",
+          "dur": 1.8,
+          "closest": "tr"
+        },
+        {
+          "at": "@округление",
+          "do": "highlight",
+          "selector": "text=К заказу",
+          "dur": 2.5,
+          "closest": "tr"
+        }
+      ]
+    },
+    {
+      "id": "s05_risks",
+      "type": "browser",
+      "url": "site/index.html#summary",
+      "screen": "Вкладка «Риски»: дефицит неизбежен, если опоздать, излишки",
+      "text": "Риски. Дефицит неизбежен — {deficit_unavoidable} {w_deficit}: товар кончится раньше, чем придёт заказ, размещённый сегодня; тут нужен местный поставщик или ускоренная доставка. Отдельно — дефицит, если опоздать с заказом, излишки, опаздывающие заказы и поставщики с недовозом.",
+      "actions": [
+        {
+          "at": 0.02,
+          "do": "click",
+          "selector": ".tab[data-tab=risks]"
+        },
+        {
+          "at": "@Дефицит неизбежен",
+          "do": "highlight",
+          "selector": "#risks-deficit",
+          "dur": 4.0
+        },
+        {
+          "at": "@Отдельно",
+          "do": "scroll",
+          "selector": "#risks-late",
+          "offset": -120,
+          "dur": 1.5
+        },
+        {
+          "at": "@излишки",
+          "do": "highlight",
+          "selector": "#risks-excess",
+          "dur": 2.0
+        },
+        {
+          "at": "@опаздывающие",
+          "do": "scroll",
+          "selector": "#risks-po",
+          "offset": -120,
+          "dur": 1.5
+        }
+      ]
+    },
+    {
+      "id": "s06_review_dead",
+      "type": "browser",
+      "url": "site/index.html#summary",
+      "screen": "Вкладки «На пересмотр цены» и «Мёртвый ассортимент»",
+      "text": "Товар с наценкой ниже двадцати пяти процентов в заказ не попадает даже при дефиците — он идёт на пересмотр цены: {review_low_markup} с низкой наценкой и {review_no_cost} без себестоимости. Без продаж двенадцать месяцев — мёртвый ассортимент: {dead_sell} распродать, {dead_close} закрыть.",
+      "actions": [
+        {
+          "at": 0.02,
+          "do": "click",
+          "selector": ".tab[data-tab=review]"
+        },
+        {
+          "at": "@мёртвый",
+          "do": "click",
+          "selector": ".tab[data-tab=dead]"
+        }
+      ]
+    },
+    {
+      "id": "s07_accuracy",
+      "type": "browser",
+      "url": "site/index.html#summary",
+      "screen": "Вкладка «Точность прогноза»: WAPE модели против среднего, графики по категориям",
+      "text": "Насколько прогнозу можно верить, показывает бэктест: модель обучена на данных до августа двадцать пятого года, её прогноз на следующие двенадцать месяцев сравнивается с фактом. Ориентир — заказ по среднему за год. Ошибка модели — {wape_model}%, у среднего — {wape_naive}%. На сезонных категориях модель заметно точнее, на смесителях и зернодробилках среднее лучше — и это показано как есть.",
+      "actions": [
+        {
+          "at": 0.02,
+          "do": "click",
+          "selector": ".tab[data-tab=accuracy]"
+        },
+        {
+          "at": "@Ошибка",
+          "do": "highlight",
+          "selector": "text=WAPE и смещение по категориям",
+          "dur": 3.5,
+          "closest": ".card"
+        },
+        {
+          "at": "@сезонных",
+          "do": "scroll",
+          "selector": "text=Факт, модель и наивный",
+          "offset": -100,
+          "dur": 1.6
+        },
+        {
+          "at": "@смесителях",
+          "do": "scroll",
+          "to": 99999,
+          "dur": 1.6
+        }
+      ]
+    },
+    {
+      "id": "s08_method",
+      "type": "browser",
+      "url": "site/index.html#summary",
+      "screen": "Вкладка «Методика и параметры»: как считается заказ, ограничения данных, параметры config.toml",
+      "text": "Последняя вкладка — методика: правила расчёта, ограничения данных и все параметры этого прогона.",
+      "actions": [
+        {
+          "at": 0.02,
+          "do": "click",
+          "selector": ".tab[data-tab=method]"
+        },
+        {
+          "at": "@ограничения",
+          "do": "highlight",
+          "selector": "text=Ограничения данных",
+          "dur": 2.0,
+          "closest": ".card"
+        },
+        {
+          "at": "@все параметры",
+          "do": "scroll",
+          "selector": "text=Параметры расчёта",
+          "offset": -100,
+          "dur": 1.5
+        }
+      ]
+    },
+    {
+      "id": "s09_claude_code",
+      "type": "desktop",
+      "screen": "Запись экрана: VS Code с открытым проектом procurement-ai, панель Claude Code; в дереве слева раскрыть procurement/, .claude/skills/zakupki, prompts/, .autopilot/",
+      "placeholder": "Здесь будет запись Claude Code: VS Code, дерево проекта, панель Claude Code",
+      "text": "Теперь — как это устроено и собрано. Вся разработка шла в Claude Code. Слева структура проекта: данные, пакет procurement, промпт, скилл, параметры, тесты и папка .autopilot с документами сборки."
+    },
+    {
+      "id": "s10_modules",
+      "type": "title",
+      "screen": "Схема модулей: data → demand → supply → plan → plan.json → site / ai / history / notify / backtest",
+      "text": "Расчёт — цепочка модулей. data читает и проверяет шесть CSV. demand строит прогноз на восемнадцать месяцев: сезонность, тренд и упущенный спрос. supply — плечо, товар в пути и надёжность поставщика. plan принимает решение по каждому SKU. Результат — plan.json, из него собираются сайт, записка ИИ, история прогонов и дайджест.",
+      "html": "<div class='eyebrow'>procurement/ — как устроен расчёт</div><h2>Цепочка модулей</h2><div class='flow'><div class='node rv'><b>data</b><span>6 CSV, проверка, дата анализа</span></div><div class='arr rv'>→</div><div class='node rv'><b>demand</b><span>прогноз 18 мес: сезонность, тренд, упущенный спрос</span></div><div class='arr rv'>→</div><div class='node rv'><b>supply</b><span>плечо, в пути, надёжность поставщика</span></div><div class='arr rv'>→</div><div class='node rv'><b>plan</b><span>решение по каждому SKU и «почему столько»</span></div></div><div class='fan rv'><div class='json'>out/plan.json</div><div class='outs'><span>site — дашборд и Excel</span><span>ai — записка DeepSeek</span><span>history — что изменилось</span><span>notify — Telegram</span><span>backtest — точность</span></div></div>",
+      "actions": [
+        {
+          "at": "@data",
+          "do": "reveal",
+          "index": 0
+        },
+        {
+          "at": "@demand",
+          "do": "reveal",
+          "index": 1
+        },
+        {
+          "at": "@demand",
+          "do": "reveal",
+          "index": 2
+        },
+        {
+          "at": "@supply",
+          "do": "reveal",
+          "index": 3
+        },
+        {
+          "at": "@supply",
+          "do": "reveal",
+          "index": 4
+        },
+        {
+          "at": "@plan принимает",
+          "do": "reveal",
+          "index": 5
+        },
+        {
+          "at": "@plan принимает",
+          "do": "reveal",
+          "index": 6
+        },
+        {
+          "at": "@Результат",
+          "do": "reveal",
+          "index": 7
+        }
+      ]
+    },
+    {
+      "id": "s11_plan_code",
+      "type": "code",
+      "file": "procurement/plan.py",
+      "start": "def need_at",
+      "lines": 31,
+      "title": "procurement/plan.py — потребность на дату заказа",
+      "screen": "Код need_at в plan.py с подсветкой строк формулы",
+      "text": "Сердце решения — функция need_at: заказ, размещённый сегодня, придёт через плечо и должен закрыть спрос ещё на период покрытия. Каждое слагаемое сохраняется в explain — это и есть «почему столько» на дашборде.",
+      "actions": [
+        {
+          "at": 0.45,
+          "do": "scroll",
+          "to": 300,
+          "dur": 5.0
+        }
+      ],
+      "hl": [
+        "at_arrival = max",
+        "f_h = ",
+        "saf = ",
+        "gross = round",
+        "qty = gross",
+        "final = _round_lot"
+      ]
+    },
+    {
+      "id": "s12_config",
+      "type": "code",
+      "file": "config.toml",
+      "start": 1,
+      "lines": 60,
+      "title": "config.toml — бизнес-параметры",
+      "hl": [
+        "min_markup_pct",
+        "default_cover_days",
+        "safety_cap_months",
+        "lead_default_days"
+      ],
+      "screen": "config.toml с комментариями, подсветка min_markup_pct, default_cover_days и др.",
+      "text": "Бизнес-параметры — в config.toml, с комментариями: наценка, покрытие, уровни сервиса, плечо, потолки. Правило меняется без правки кода.",
+      "actions": [
+        {
+          "at": 0.35,
+          "do": "scroll",
+          "to": 700,
+          "dur": 6.0
+        }
+      ]
+    },
+    {
+      "id": "s13_agents",
+      "type": "code",
+      "file": "AGENTS.md",
+      "start": 1,
+      "lines": 60,
+      "title": "CLAUDE.md → AGENTS.md + README.md",
+      "prepend_file": "CLAUDE.md",
+      "screen": "CLAUDE.md (две строки-импорта) и AGENTS.md: контекст задачи, правила правок, история git",
+      "text": "CLAUDE.md подключает AGENTS.md и README. В AGENTS.md — контекст задачи и правила для агента: где требования, как продолжить сборку и как по истории git найти, почему код такой.",
+      "actions": [
+        {
+          "at": 0.3,
+          "do": "scroll",
+          "to": 600,
+          "dur": 6.0
+        }
+      ]
+    },
+    {
+      "id": "s14_skill",
+      "type": "code",
+      "file": ".claude/skills/zakupki/SKILL.md",
+      "start": 1,
+      "lines": 80,
+      "title": ".claude/skills/zakupki/SKILL.md — скилл /zakupki",
+      "hl": [
+        "Числа не придумывай",
+        "explain",
+        "config_try"
+      ],
+      "screen": "SKILL.md скилла /zakupki: правила, четыре режима",
+      "text": "Скилл /zakupki делает Claude Code интерфейсом закупщика: пересчитать план, объяснить, почему по позиции столько, собрать заказ поставщику, поменять параметр и показать разницу KPI. Главное правило — числа не придумывать, только читать из расчёта.",
+      "actions": [
+        {
+          "at": 0.25,
+          "do": "scroll",
+          "to": 1300,
+          "dur": 12.0
+        }
+      ]
+    },
+    {
+      "id": "s15_skill_live",
+      "type": "desktop",
+      "screen": "Запись экрана: в панели Claude Code ввести «/zakupki почему по SKU-67717F 400 шт.?» — дождаться ответа с разбором explain",
+      "placeholder": "Здесь будет запись Claude Code: вопрос /zakupki «почему по SKU-67717F столько?» и ответ по explain",
+      "text": "Так это выглядит: спрашиваю, почему по позиции столько, — и получаю разбор по полям explain."
+    },
+    {
+      "id": "s16_prompt",
+      "type": "code",
+      "file": "prompts/analyst.md",
+      "start": 1,
+      "lines": 60,
+      "title": "prompts/analyst.md — промпт ИИ-аналитика (DeepSeek)",
+      "hl": [
+        "Главное правило",
+        "Используй только числа",
+        "Строго JSON"
+      ],
+      "wrap": true,
+      "screen": "Промпт аналитика: вход, главное правило, формат ответа",
+      "text": "ИИ-слой — DeepSeek. Он получает сводку уже посчитанного прогона, а промпт запрещает досчитывать: только числа из входа, ответ строго JSON — записка из четырёх разделов и пояснения к рисковым позициям. Нет ключа — дашборд собирается без записки.",
+      "actions": [
+        {
+          "at": 0.3,
+          "do": "scroll",
+          "to": 900,
+          "dur": 9.0
+        }
+      ]
+    },
+    {
+      "id": "s17_workflow",
+      "type": "code",
+      "file": ".github/workflows/plan.yml",
+      "start": 1,
+      "lines": 120,
+      "title": ".github/workflows/plan.yml — регулярный запуск",
+      "hl": [
+        "cron:",
+        "data/raw/",
+        "workflow_dispatch",
+        "procurement run",
+        "procurement notify",
+        "deploy-pages",
+        "needs:"
+      ],
+      "screen": "Workflow GitHub Actions: расписание, пуш CSV, кнопка; plan → deploy → notify",
+      "text": "Регулярный запуск — GitHub Actions: каждое утро, при пуше новых CSV и по кнопке. plan считает и коммитит историю, deploy публикует дашборд на GitHub Pages, notify отправляет дайджест в Телеграм.",
+      "actions": [
+        {
+          "at": 0.2,
+          "do": "scroll",
+          "to": 1600,
+          "dur": 9.5
+        }
+      ]
+    },
+    {
+      "id": "s18_autopilot",
+      "type": "title",
+      "screen": "Схема процесса сборки: бриф → манифест → спецификация → таски → субагенты → ревью",
+      "text": "Собирал я скиллом /autopilot в режиме интервью, бриф прорабатывал через /grilling. Цепочка: бриф с дословным заданием, манифест требований, которые может снять только я, спецификация, таски с зонами файлов, исполнители-субагенты и точечные ревью.",
+      "html": "<div class='eyebrow'>Как собрано · /autopilot + /grilling</div><h2>Процесс сборки</h2><div class='flow small'><div class='node rv'><b>Бриф</b><span>дословный текст задания + ответы на /grilling</span></div><div class='arr rv'>→</div><div class='node rv'><b>Манифест</b><span>{req_total} требований, снять может только автор</span></div><div class='arr rv'>→</div><div class='node rv'><b>Спецификация</b><span>истории и решения по реализации</span></div><div class='arr rv'>→</div><div class='node rv'><b>Таски</b><span>{tickets} тасков, у каждого своя зона файлов</span></div><div class='arr rv'>→</div><div class='node rv'><b>Субагенты + ревью</b><span>исполнитель пишет, ревьюер проверяет</span></div></div>",
+      "actions": [
+        {
+          "at": "@бриф с",
+          "do": "reveal",
+          "index": 0
+        },
+        {
+          "at": "@манифест",
+          "do": "reveal",
+          "index": 1
+        },
+        {
+          "at": "@манифест",
+          "do": "reveal",
+          "index": 2
+        },
+        {
+          "at": "@спецификация",
+          "do": "reveal",
+          "index": 3
+        },
+        {
+          "at": "@спецификация",
+          "do": "reveal",
+          "index": 4
+        },
+        {
+          "at": "@таски",
+          "do": "reveal",
+          "index": 5
+        },
+        {
+          "at": "@таски",
+          "do": "reveal",
+          "index": 6
+        },
+        {
+          "at": "@исполнители",
+          "do": "reveal",
+          "index": 7
+        },
+        {
+          "at": "@исполнители",
+          "do": "reveal",
+          "index": 8
+        }
+      ]
+    },
+    {
+      "id": "s19_ap_dashboard",
+      "type": "browser",
+      "url": ".autopilot/dashboard.html",
+      "cursor": false,
+      "screen": "Дашборд сборки .autopilot/dashboard.html: этапы, таски, требования",
+      "text": "Ход сборки виден на дашборде автопилота: этапы, таски и статус требований — их {req_total}.",
+      "actions": [
+        {
+          "at": 0.3,
+          "do": "scroll",
+          "to": 1400,
+          "dur": 4.5
+        }
+      ]
+    },
+    {
+      "id": "s20_reviews",
+      "type": "title",
+      "screen": "Карточки D01–D06: что нашло ревью в данных и как исправлено",
+      "text": "Ревью ловило ошибки в данных, а не только в коде. D01: поле «получено» пустое у восьмидесяти шести процентов закрытых заказов, поэтому надёжность считается по фактическим приходам. D03: прогноз у позиции без остатка взлетал в четыреста раз — появился потолок. D04–D06: страховой больше спроса, слишком крупная партия и дозаказ потерянных продаж раздували заказ до двухсот пятидесяти восьми тысяч штук; после правок — {order_now_qty}.",
+      "html": "<div class='eyebrow'>manifest.md · решения, найденные при сборке</div><h2>Что поймали ревью</h2><div class='cards'><div class='dcard rv'><i>D01</i><b>Надёжность по приходам</b><span>qty_received = 0 у 86% закрытых заказов, хотя приходы есть в receipts.csv → доля исполнения по receipts</span></div><div class='dcard rv'><i>D03</i><b>Взрыв прогноза</b><span>SKU без остатка весь сезон: прогноз ×400 к продажам года (5 → 2 076 шт.) → потолок 2× продаж 12 мес.</span></div><div class='dcard rv'><i>D04–D06</i><b>Раздутый заказ</b><span>страховой больше спроса, партия больше годового спроса, дозаказ потерянных продаж</span></div><div class='dcard big rv'><b>≈ 258 000 → {order_now_qty} шт.</b><span>заказ «сейчас» до и после правок D04–D06 · бэктест: ошибка {wape_model}% против {wape_naive}% у среднего</span></div></div>",
+      "actions": [
+        {
+          "at": "@D01",
+          "do": "reveal",
+          "index": 0
+        },
+        {
+          "at": "@D03",
+          "do": "reveal",
+          "index": 1
+        },
+        {
+          "at": "@D04",
+          "do": "reveal",
+          "index": 2
+        },
+        {
+          "at": "@двухсот",
+          "do": "reveal",
+          "index": 3
+        }
+      ]
+    },
+    {
+      "id": "s21_run_workflow",
+      "type": "desktop",
+      "screen": "Запись экрана: GitHub → Actions → «План закупок» → Run workflow; прогон plan → deploy → notify; открыть опубликованный дашборд",
+      "placeholder": "Здесь будет запись: GitHub Actions → «Run workflow» → plan, deploy, notify",
+      "text": "Регулярный запуск: на вкладке Actions — Run workflow, или прогон идёт сам каждое утро. Через пару минут на GitHub Pages уже обновлённый дашборд."
+    },
+    {
+      "id": "s22_digest",
+      "type": "digest",
+      "screen": "Дайджест в Telegram — текст из notify.build_digest по свежему прогону",
+      "text": "И приходит дайджест в Телеграм: что заказать сейчас, крупнейшие заказы, новые риски и ссылка на дашборд.",
+      "actions": [
+        {
+          "at": 0.3,
+          "do": "scroll",
+          "to": 600,
+          "dur": 4.5
+        }
+      ]
+    },
+    {
+      "id": "s23_outro",
+      "type": "title",
+      "screen": "Итоговая карточка: что делает система, ссылки",
+      "text": "Итог: система отвечает, что, сколько и когда заказывать, на сколько хватит запасов и где риск дефицита или излишка, пересчитывается сама и объясняет каждое число. Ссылки — в сообщении. Спасибо.",
+      "html": "<div class='eyebrow'>Итог</div><h2>Что, сколько и когда заказывать — с объяснением каждого числа</h2><ul class='list'><li class='rv'>{order_now_positions} позиций · {order_now_qty} шт. к заказу сейчас у {order_now_suppliers} поставщиков</li><li class='rv'>риски дефицита и излишка, пересмотр цены, мёртвый ассортимент</li><li class='rv'>ежедневный пересчёт: GitHub Actions → Pages → Telegram</li></ul><div class='links rv'><span>evgeniykliys-sudo.github.io/procurement-ai</span><span>github.com/evgeniykliys-sudo/procurement-ai</span></div>",
+      "actions": [
+        {
+          "at": "@что, сколько",
+          "do": "reveal",
+          "index": 0
+        },
+        {
+          "at": "@где риск",
+          "do": "reveal",
+          "index": 1
+        },
+        {
+          "at": "@пересчитывается",
+          "do": "reveal",
+          "index": 2
+        },
+        {
+          "at": "@Ссылки",
+          "do": "reveal",
+          "index": 3
+        }
+      ]
+    }
+  ]
+}
