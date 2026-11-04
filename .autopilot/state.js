@@ -13,7 +13,7 @@ window.STATE =
   "skillDir": "C:/Users/JG777/Documents/Projects/.agents/skills/autopilot",
   "baseCommit": "f33a596",
   "startedAt": "2026-11-04T10:40:02+07:00",
-  "updatedAt": "2026-11-04T17:36:10+07:00",
+  "updatedAt": "2026-11-04T19:38:30+07:00",
   "finishedAt": null,
   "stages": [
     {
@@ -394,10 +394,15 @@ window.STATE =
     "2026-11-04T16:58:31+07:00",
     "2026-11-04T16:58:32+07:00",
     "2026-11-04T17:11:56+07:00",
-    "2026-11-04T17:36:10+07:00"
+    "2026-11-04T17:36:10+07:00",
+    "2026-11-04T19:38:30+07:00"
   ],
-  "rev": 46,
-  "waiting": null,
+  "rev": 49,
+  "waiting": {
+    "kind": "action",
+    "since": "2026-11-04T19:38:30+07:00",
+    "note": "секреты: bash scripts/setup_secrets.sh; запись экрана s09/s15/s21 или скриншоты"
+  },
   "waits": [
     {
       "kind": "briefing",
@@ -760,6 +765,12 @@ window.STATE =
         "passed": 121,
         "failed": 0
       }
+    },
+    {
+      "t": "2026-11-04T19:38:30+07:00",
+      "k": "ask",
+      "kind": "action",
+      "note": "секреты: bash scripts/setup_secrets.sh; запись экрана s09/s15/s21 или скриншоты"
     }
   ],
   "reqList": [
