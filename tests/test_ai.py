@@ -220,3 +220,10 @@ def test_failures_return_reason_in_russian_and_never_the_key(calls, tmp_path, mo
     out = capsys.readouterr()
     assert KEY not in note["error"] + out.out + out.err + caplog.text
     assert not list((tmp_path / "cache").glob("*.json"))  # ошибки не кешируются
+
+
+def test_note_mentioning_unknown_sku_is_dropped():
+    """Пояснение к SKU из входа, в тексте которого выдуманный SKU, в карточку не попадает."""
+    _, notes = ai._clean("## Главное\nok", {"SKU-AAA111": "как у SKU-FAKE99 — заказать 500",
+                                            "SKU-BBB222": "в норме"}, {"SKU-AAA111", "SKU-BBB222"})
+    assert notes == {"SKU-BBB222": "в норме"}

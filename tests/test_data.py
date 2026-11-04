@@ -131,3 +131,26 @@ def test_cut_dataset_recomputes_markup_like_erp(make_dataset):
     assert cut_dataset(ds, date(2025, 7, 1)).sku["avg_markup_pct_12m"].iloc[0] == pytest.approx(40)
     # 2026-02: за 12 мес продаж нет → наценка пустая (мёртвый)
     assert pd.isna(cut_dataset(ds, date(2026, 2, 1)).sku["avg_markup_pct_12m"].iloc[0])
+
+
+def test_partial_service_level_keeps_other_classes(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("[service_level]\nA = 0.99\n", encoding="utf-8")
+    assert load_config(p).service_level == {"A": 0.99, "B": 0.90, "C": 0.80}
+
+
+def test_cut_dataset_mid_month_keeps_sales_to_date(make_dataset):
+    """D13: на 16.01 продажи января до этой даты (15 из 31 дня) — строкой неполного месяца:
+    остаток на дату их вычитает из снимка на 1-е, прогноз их не берёт."""
+    from procurement.demand import stock_on
+    stock = [{"sku_id": "SKU-1", "month": "2024-01", "stock_qty": 100}]
+    ds = make_dataset(sales=make_dataset.series("SKU-1", "2023-01", [62] * 13), stock=stock)  # январь 2024 полный
+    c = cut_dataset(ds, date(2024, 1, 16))
+    cur = c.sales[c.sales["month"] == pd.Period("2024-01", "M")]
+    assert cur["qty_sold"].tolist() == [30] and cur["partial_month"].tolist() == [1]
+    assert stock_on(c, date(2024, 1, 16)).iloc[0] == 70
+    assert stock_on(cut_dataset(ds, date(2024, 1, 1)), date(2024, 1, 1)).iloc[0] == 100
+    # месяц в выгрузке сам неполный (по 13-е): на 07.01 — 6 из его 12 дней
+    part = make_dataset(sales=make_dataset.series("SKU-1", "2023-01", [62] * 12 + [24], partial_last=True), stock=stock)
+    c = cut_dataset(part, date(2024, 1, 7), partial_day=13)
+    assert c.sales.loc[c.sales["month"] == pd.Period("2024-01", "M"), "qty_sold"].tolist() == [12]

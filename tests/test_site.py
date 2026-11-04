@@ -130,3 +130,16 @@ def test_render_markdown_basics():
     assert "<code>кодом</code>" in out and "<em>курсивом</em>" in out
     assert "<ol><li>раз</li><li>два</li></ol>" in out
     assert "&lt;b&gt;x&lt;/b&gt; &amp; y" in out
+
+
+def test_accuracy_category_without_sales_does_not_break_site(run, tmp_path):
+    """Категория без продаж в окне бэктеста: метрик нет — «нет продаж», а не TypeError."""
+    bt = json.loads(json.dumps(run["backtest"]))
+    bt["by_category"].append({"category": "empty_cat", "actual": 0.0, "model": 0.0, "naive": 0.0,
+                              "wape_model": None, "wape_naive": None, "bias_model": None, "bias_naive": None,
+                              "wape_sku_model": None, "wape_sku_naive": None, "excluded_sku_months": 0,
+                              "new_sku_actual": 0})
+    bt["series"]["empty_cat"] = []
+    index = build_site(run["plan"], run["diff"], bt, {"ok": False, "error": "нет"}, [], out_dir=tmp_path / "s")
+    html = index.read_text(encoding="utf-8")
+    assert "empty_cat" in html and "нет продаж" in html

@@ -163,11 +163,12 @@ def _fail(error: str, model: str) -> dict:
 
 
 def _clean(markdown: str, notes: dict, allowed: set[str]) -> tuple[str, dict]:
-    """Строки записки с SKU не из входа выбрасываются; пояснения — только к SKU из входа."""
+    """Строки записки с SKU не из входа выбрасываются; пояснения — только к SKU из входа и только
+    такие, в тексте которых нет SKU не из входа (иначе выдуманный товар попал бы в карточку)."""
     lines = markdown.splitlines()
     kept = [ln for ln in lines if set(SKU_RE.findall(ln)) <= allowed]
     clean_notes = {k: str(v).strip() for k, v in notes.items()
-                   if k in allowed and isinstance(v, str) and v.strip()}
+                   if k in allowed and isinstance(v, str) and v.strip() and set(SKU_RE.findall(v)) <= allowed}
     if len(kept) < len(lines) or len(clean_notes) < len(notes):
         log.info("Из ответа ИИ вычищено строк: %d, пояснений: %d (SKU не из входа).",
                  len(lines) - len(kept), len(notes) - len(clean_notes))

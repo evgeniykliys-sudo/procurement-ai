@@ -81,7 +81,8 @@ def load_config(path: str | Path = "config.toml") -> Config:
         elif key == "lot_rounding":
             value = tuple((float(limit), int(step)) for limit, step in value)
         elif key == "service_level":
-            value = {str(k): float(v) for k, v in value.items()}
+            # заданы не все классы (только A = 0.99) — остальные по умолчанию, а не KeyError в расчёте
+            value = {**Config().service_level, **{str(k): float(v) for k, v in value.items()}}
         elif key == "as_of":
             value = _parse_as_of(value)
         values[key] = value

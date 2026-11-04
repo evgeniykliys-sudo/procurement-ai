@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 
 from . import ai, notify, site
-from .backtest import mark_weak_forecast, run_backtest
+from .backtest import default_cut, mark_weak_forecast, run_backtest
 from .config import load_config
 from .data import DataError, cut_dataset, detect_as_of, load_dataset
 from .demand import build_demand
@@ -35,7 +35,7 @@ def compute_plan(raw, cfg, as_of: date | None = None) -> tuple[dict, object, obj
     if as_of > data_as_of:  # остатка и продаж на эту дату в выгрузке нет — расчёт был бы на нулях
         raise ValueError(f"дата анализа {as_of.isoformat()} позже данных выгрузки ({data_as_of.isoformat()}): "
                          "уберите as_of из config.toml или укажите дату не позже данных")
-    ds = cut_dataset(ds_full, as_of) if as_of < data_as_of else ds_full
+    ds = cut_dataset(ds_full, as_of, cfg.partial_day) if as_of < data_as_of else ds_full
     demand = build_demand(ds, cfg, as_of)
     plan = build_plan(ds, demand, cfg, as_of)
     return plan_to_json(plan), ds_full, cfg
@@ -46,7 +46,9 @@ def cmd_run(args) -> int:
     cfg = load_config(args.config)
     as_of = date.fromisoformat(args.as_of) if args.as_of else None
     plan_json, ds_full, cfg = compute_plan(args.raw, cfg, as_of)
-    backtest = run_backtest(ds_full, cfg)
+    # бэктест — от даты прогона, а не от конца выгрузки: при --as-of в прошлое он не видит данных
+    # после неё (иначе флаг «прогноз не точнее наивного» и записка ИИ опирались бы на будущее)
+    backtest = run_backtest(ds_full, cfg, cut=default_cut(ds_full, cfg, date.fromisoformat(plan_json["as_of"])))
     mark_weak_forecast(plan_json, backtest)
     hist_dir, out_dir = Path(args.history), Path(args.out)
     prev = previous_run(hist_dir, plan_json["as_of"])

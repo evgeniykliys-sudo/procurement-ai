@@ -30,9 +30,10 @@ from .demand import build_demand
 NAIVE_MONTHS = 12
 
 
-def default_cut(ds: Dataset, cfg: Config) -> date:
-    """1-е число месяца даты анализа по данным минус `cfg.backtest_months` мес."""
-    m = pd.Period(detect_as_of(ds, replace(cfg, as_of=None)), "M") - cfg.backtest_months
+def default_cut(ds: Dataset, cfg: Config, as_of: date | None = None) -> date:
+    """1-е число месяца даты анализа минус `cfg.backtest_months` мес. Дата анализа — `as_of` (прогон
+    на прошлую дату: окно факта кончается до неё, данных из будущего бэктест не видит), иначе — по данным."""
+    m = pd.Period(as_of or detect_as_of(ds, replace(cfg, as_of=None)), "M") - cfg.backtest_months
     return date(m.year, m.month, 1)
 
 

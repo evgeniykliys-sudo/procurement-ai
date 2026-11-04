@@ -73,7 +73,8 @@ def facts() -> dict:
         # главная метрика дашборда — ошибка по SKU (D10); по сумме категории — только для сведения
         "wape_model": _pct(bt["total"]["wape_sku_model"]),
         "wape_naive": _pct(bt["total"]["wape_sku_naive"]),
-        "bt_better": sum(1 for c in bt["by_category"] if c["wape_sku_model"] < c["wape_sku_naive"]),
+        "bt_better": sum(1 for c in bt["by_category"] if c.get("wape_sku_model") is not None
+                         and c.get("wape_sku_naive") is not None and c["wape_sku_model"] < c["wape_sku_naive"]),
         "bt_cats": len(bt["by_category"]),
         "diff_prev": diff.get("prev_as_of") or "",
         "diff_new_orders": num(diff.get("new_orders_count", len(diff.get("new_orders", [])))),

@@ -102,3 +102,13 @@ def test_history_is_compact_and_reproducible(real_run):
         assert set(data) == {"as_of", "kpi", "items"} and len(data["items"]) >= 700
         assert set(data["items"][0]) == {"sku_id", "status", "order_qty", "risk", "category", "supplier_id"}
         assert len(raw) < 200_000, name
+
+
+def test_run_on_past_date_backtests_without_future(tmp_path):
+    """--as-of 2026-07-01: бэктест от этой даты (срез 2025-07-01, окно факта до июня 2026)."""
+    common = ["--raw", str(REAL_RAW), "--history", str(tmp_path / "history")]
+    assert main(["run", "--no-ai", "--as-of", "2026-07-01", *common, "--out", str(tmp_path / "out"),
+                 "--site", str(tmp_path / "site")]) == 0
+    bt = json.loads((tmp_path / "out" / "backtest.json").read_text(encoding="utf-8"))
+    assert bt["cut"] == "2025-07-01"
+    assert max(r["month"] for s in bt["series"].values() for r in s) == "2026-06"

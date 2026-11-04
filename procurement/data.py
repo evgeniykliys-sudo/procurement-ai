@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
@@ -174,18 +175,30 @@ def _refresh_sku(sku: pd.DataFrame, sales: pd.DataFrame, po: pd.DataFrame, as_of
     return sku
 
 
-def cut_dataset(ds: Dataset, as_of: date) -> Dataset:
+def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None) -> Dataset:
     """Набор «как он выглядел бы» на `as_of` — для прошлого прогона и бэктеста.
 
-    Продажи месяцев раньше месяца `as_of` (все полные), снимки остатка на 1-е ≤ `as_of`,
-    приходы раньше `as_of`, заказы с `order_date < as_of`. Заказ с плановой датой ≥ `as_of`
-    на ту дату считается ещё в пути (приближение): `qty_pending += qty_received`,
-    `qty_received = 0`, `status = open`. Карточки, заведённые после `as_of` и без продаж
-    до неё, убираются; поля активности справочника пересчитываются на дату.
+    Продажи месяцев раньше месяца `as_of` (все полные); продажи месяца `as_of` до этой даты —
+    доля прошедших дней (D13), строкой неполного месяца (`partial_month = 1`): прогноз её не
+    берёт, а остаток на дату (`stock_on`) вычитает из снимка на 1-е. Если в выгрузке этот месяц
+    сам неполный (выгрузка на `partial_day`-е), доля считается от его `partial_day − 1` дней.
+    Снимки остатка на 1-е ≤ `as_of`, приходы раньше `as_of`, заказы с `order_date < as_of`.
+    Заказ с плановой датой ≥ `as_of` на ту дату считается ещё в пути (приближение):
+    `qty_pending += qty_received`, `qty_received = 0`, `status = open`. Карточки, заведённые
+    после `as_of` и без продаж до неё, убираются; поля активности справочника пересчитываются.
     """
     month = pd.Period(as_of, "M")
     sales = ds.sales[ds.sales["month"] < month].copy()
     sales["partial_month"] = 0
+    cur = ds.sales[ds.sales["month"] == month].copy()
+    if as_of.day > 1 and not cur.empty:
+        days = np.where(cur["partial_month"] == 1, max((partial_day or as_of.day) - 1, 1),
+                        calendar.monthrange(as_of.year, as_of.month)[1])
+        share = np.minimum((as_of.day - 1) / days, 1.0)
+        for col in ("qty_sold", "qty_returned", "orders_cnt"):
+            cur[col] = np.rint(cur[col].to_numpy() * share).astype("int64")
+        cur["partial_month"] = 1
+        sales = pd.concat([sales, cur], ignore_index=True).sort_values(["sku_id", "month"], kind="stable")
     stock = ds.stock[ds.stock["month"] <= month].copy()
     receipts = ds.receipts[ds.receipts["receipt_date"] < as_of].copy()
     po = ds.po[ds.po["order_date"] < as_of].copy()

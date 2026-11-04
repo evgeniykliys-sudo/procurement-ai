@@ -505,10 +505,10 @@
         {% for r in accuracy.rows %}
           <tr><td>{{ r.label }}</td><td class="n" data-v="{{ r.actual }}">{{ r.actual|int }}</td>
           <td class="n {{ 'strong txt-green' if r.better }}" data-v="{{ r.wape_sku_model }}">{{ r.wape_sku_model|pct }}</td>
-          <td class="n {{ 'strong' if not r.better }}" data-v="{{ r.wape_sku_naive }}">{{ r.wape_sku_naive|pct }}</td>
+          <td class="n {{ 'strong' if r.better == false }}" data-v="{{ r.wape_sku_naive }}">{{ r.wape_sku_naive|pct }}</td>
           <td class="n muted" data-v="{{ r.wape_model }}">{{ r.wape_model|pct }} / {{ r.wape_naive|pct }}</td>
           <td class="n" data-v="{{ r.bias_model }}">{{ r.bias_model|pct(0, True) }} <span class="muted">/ {{ r.bias_naive|pct(0, True) }}</span></td>
-          <td>{% if r.better %}<span class="badge st-ok">модель</span>{% else %}<span class="badge st-dead_close">наивный</span>{% endif %}</td></tr>
+          <td>{% if r.better %}<span class="badge st-ok">модель</span>{% elif r.better == false %}<span class="badge st-dead_close">наивный</span>{% else %}<span class="muted">нет продаж</span>{% endif %}</td></tr>
         {% endfor %}
         </tbody>
         <tfoot><tr><td>Итого</td><td class="n">{{ accuracy.total.actual|int }}</td><td class="n strong">{{ accuracy.total.wape_sku_model|pct }}</td><td class="n">{{ accuracy.total.wape_sku_naive|pct }}</td><td class="n">{{ accuracy.total.wape_model|pct }} / {{ accuracy.total.wape_naive|pct }}</td><td class="n">{{ accuracy.total.bias_model|pct(0, True) }} / {{ accuracy.total.bias_naive|pct(0, True) }}</td><td></td></tr></tfoot>
@@ -551,7 +551,7 @@
         <li><b>Плечо L.</b> Медиана плановых сроков заказов SKU, иначе — медиана поставщика, иначе {{ cfg.lead_default_days }} дн.; в пределах {{ cfg.lead_min_days }}–{{ cfg.lead_max_days }} дн. Без истории приходов (<code>unknown</code>) плечо помечено «оценочное».</li>
         <li><b>Покрытие R</b> = {{ cfg.default_cover_days }} дн. (в ERP <code>target_cover_days</code> = 0 у всех SKU); план пересматривается раз в {{ cfg.review_period_days }} дн.</li>
         <li><b>Страховой запас (D07)</b> = √(покрытие² + плечо²): покрытие = z × σ × √(R / 30), плечо = z × σ × √(L / 30); σ — устойчивый разброс месячных продаж (1,25 × MAD), в каждом окне масштабируется его сезоном (у обогревателя с приходом в феврале разброс не октябрьский). Не больше {{ cfg.safety_cap_months }} мес. спроса периода покрытия. У ровного спроса это обычное z × σ × √((L + R) / 30). Уровень сервиса по ABC: {% for k, v in cfg.service_level.items() %}{{ k }} — {{ v|pct }}{% if not loop.last %}, {% endif %}{% endfor %}.</li>
-        <li><b>Потерянный спрос до прихода (D06).</b> Если товар кончится раньше, чем придёт заказ, продажи в эти дни потеряны и не дозаказываются: остаток к приходу = max(0; остаток + в пути до прихода − прогноз до прихода).</li>
+        <li><b>Потерянный спрос до прихода (D06).</b> Если товар кончится раньше, чем придёт заказ, продажи в эти дни потеряны и не дозаказываются: остаток к приходу = max(0; остаток + в пути до прихода − прогноз до прихода). Партия в пути, пришедшая после такого дефицита, на потерянный спрос не уходит — к приходу заказа на складе её остаток (D12).</li>
         <li><b>Потребность</b> = прогноз на окне покрытия (от прихода заказа ещё R дн.) + страховой − остаток к приходу − в пути с приходом в это окно.</li>
         <li><b>Надёжность поставщика (D01, D09).</b> Доля исполнения = получено / заказано по заказам старше {{ cfg.reliability_min_age_days }} дн.; «получено» — по фактическим приходам в окне до плановой даты + {{ cfg.reliability_receipt_window_days }} дн.; заказ, к которому не сопоставлен ни один приход, — «нет данных» и в долю не входит. Ниже {{ cfg.reliability_min_ratio|pct }} — потребность делится на долю, но не больше ×{{ cfg.reliability_max_uplift|num(1) }}.</li>
         <li><b>Партия (D05, D08).</b> Кратность — медиана приходов SKU, округлённая до шага. Округляем до неё, только если партия не больше половины годового прогноза и округление добавляет не больше {{ cfg.lot_max_overage_months|num(0) }} мес. спроса; иначе — до шага по величине заказа (медиана приходов — привычный объём, а не минимальный заказ поставщика). Заказ не больше прогноза на {{ cfg.excess_cover_months }} мес.</li>

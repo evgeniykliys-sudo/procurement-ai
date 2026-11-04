@@ -60,3 +60,14 @@ def test_backtest_cut_moves_with_data(make_dataset):
     sales = make_dataset.series("F", "2021-01", [100] * 60, category="flat")  # до 2025-12
     bt = run_backtest(make_dataset(sales=sales), Config())
     assert bt["cut"] == "2025-01-01" and bt["months"] == 12  # дата анализа 2026-01-01 − 12 мес
+
+
+def test_backtest_for_past_as_of_sees_no_future(make_dataset):
+    """Прогон на прошлую дату: срез и окно факта — от неё, продаж после неё бэктест не видит."""
+    from procurement.backtest import default_cut
+    sales = make_dataset.series("F", "2021-01", [100] * 60, category="flat")  # до 2025-12
+    ds = make_dataset(sales=sales)
+    cut = default_cut(ds, Config(), date(2025, 7, 1))
+    bt = run_backtest(ds, Config(), cut=cut)
+    assert bt["cut"] == "2024-07-01"
+    assert max(r["month"] for s in bt["series"].values() for r in s) == "2025-06"

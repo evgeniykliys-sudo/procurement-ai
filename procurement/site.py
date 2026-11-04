@@ -296,17 +296,21 @@ def _diff_view(diff: dict) -> dict:
 
 
 def _accuracy(backtest: dict) -> dict:
-    """«Точнее» — по ошибке на уровне SKU (заказ решается по SKU); по категории — для сведения."""
+    """«Точнее» — по ошибке на уровне SKU (заказ решается по SKU); по категории — для сведения.
+    Нет продаж в окне бэктеста — метрик нет: `better = None` («нет продаж»), ни в победы, ни в поражения."""
     def better(r):
         m, nv = r.get("wape_sku_model"), r.get("wape_sku_naive")
-        return (m < nv) if m is not None and nv is not None else r["wape_model"] <= r["wape_naive"]
+        if m is not None and nv is not None:
+            return m < nv
+        m, nv = r.get("wape_model"), r.get("wape_naive")
+        return m <= nv if m is not None and nv is not None else None
     rows = [{**r, "label": category_label(r["category"]), "better": better(r)}
             for r in backtest.get("by_category", [])]
     rows.sort(key=lambda r: (r.get("wape_sku_naive") or 0) - (r.get("wape_sku_model") or 0), reverse=True)
     return {"rows": rows, "total": backtest.get("total") or {}, "cut": backtest.get("cut"),
             "months": backtest.get("months"),
             "wins": [r["label"] for r in rows if r["better"]],
-            "losses": [r["label"] for r in rows if not r["better"]]}
+            "losses": [r["label"] for r in rows if r["better"] is False]}
 
 
 def _view(plan: dict, diff: dict, backtest: dict, note: dict, history_index: list) -> dict:
