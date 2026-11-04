@@ -13,12 +13,15 @@ class Config:
     min_markup_pct: float = 25
     default_cover_days: int = 60
     review_period_days: int = 30
+    safety_cap_months: float = 2
     service_level: dict = field(default_factory=lambda: {"A": 0.95, "B": 0.90, "C": 0.80})
     abc_thresholds: tuple = (0.80, 0.95)
     lead_default_days: int = 123
     lead_min_days: int = 30
     lead_max_days: int = 180
     excess_cover_months: int = 12
+    stockout_min_lost_qty: float = 1
+    min_order_qty: float = 1
     overdue_grace_days: int = 90
     overdue_eta_days: int = 30
     reliability_min_ratio: float = 0.95
