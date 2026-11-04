@@ -22,6 +22,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .labels import CATEGORY_LABELS, RISK_LABELS, STATUS_LABELS
+
 HERE = Path(__file__).resolve().parent
 TEMPLATES = HERE / "templates"
 STATIC = HERE / "static"
@@ -31,21 +33,7 @@ NO_DATA = "нет данных"  # доля исполнения поставщ�
 TOP_TREND_N = 10
 TOP_TREND_MIN_HISTORY = 24  # тренд = последние 12 мес / предыдущие 12 — нужен 2-летний ряд
 
-STATUS_LABELS = {
-    "order_now": "Заказать сейчас", "order_later": "Заказать позже", "ok": "В норме",
-    "review_price": "На пересмотр цены", "dead_sell": "Распродать", "dead_close": "Закрыть карточку",
-    "no_demand": "Нет спроса",
-}
-RISK_LABELS = {
-    "deficit_unavoidable": "Дефицит неизбежен", "deficit_if_late": "Дефицит, если опоздать",
-    "excess": "Излишек", "late_po": "Заказ опаздывает", "low_reliability": "Недовоз поставщика",
-}
 LEAD_SOURCE_LABELS = {"sku": "по истории SKU", "supplier": "по поставщику", "default": "оценочное"}
-CATEGORY_LABELS = {
-    "space_heaters": "Обогреватели", "string_trimmers": "Триммеры",
-    "trimmer_blades_accessories": "Ножи и леска", "concrete_mixers": "Бетономешалки",
-    "sanitary_faucets": "Смесители", "grain_mills": "Зернодробилки",
-}
 MONTHS_RU = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь",
              "октябрь", "ноябрь", "декабрь"]
 DEAD = ("dead_sell", "dead_close", "no_demand")

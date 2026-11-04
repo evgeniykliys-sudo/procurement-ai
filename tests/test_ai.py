@@ -112,6 +112,40 @@ def test_summary_is_compact_even_for_large_plan():
     assert s["kpi"]["order_now_qty"] == 43066
 
 
+def test_summary_speaks_dashboard_language():
+    """Записка не должна расходиться с дашбордом: русские подписи, проценты, WAPE по SKU, объединённый заказ."""
+    plan = _plan(3)
+    merged = plan["items"][0]
+    merged["explain"].update(gross=1870.0, lot=100, lot_source="шаг", final=3800, merged_until_review=1900)
+    merged["order_qty"] = 3800
+    plan["reliability"] = [{"supplier_id": "SUP-000001", "fill_ratio": 0.7289, "uplift": 1.2, "orders_n": 8},
+                           {"supplier_id": "SUP-000002", "fill_ratio": 0.9, "uplift": 1.0, "orders_n": 3}]
+    bt = {"by_category": [{"category": "grain_mills", "wape_model": 0.4615, "wape_naive": 0.4251,
+                           "wape_sku_model": 0.5749, "wape_sku_naive": 0.5251, "bias_model": -0.3661,
+                           "bias_naive": -0.3677}],
+          "total": {"wape_model": 0.408, "wape_naive": 0.6737, "wape_sku_model": 0.656, "wape_sku_naive": 0.8604,
+                    "bias_model": -0.071, "bias_naive": -0.035, "actual": 1.0}}
+    diff = _diff(1)
+    diff["new_orders"][0]["category"] = "space_heaters"
+    diff["new_risks"][0]["risk"] = "deficit_unavoidable"
+    s = ai.build_summary(plan, diff, bt)
+    top = next(r for r in s["top_risks"] if r["sku_id"] == merged["sku_id"])
+    assert top["explain"]["merged_until_review"] == 1900 and top["explain"]["final"] == top["order_qty"] == 3800
+    assert "cap" not in top["explain"]  # потолок — только там, где сработал
+    assert top["category"] == "Обогреватели" and top["status"] == "Заказать сейчас"
+    assert top["risk"] == ["Дефицит неизбежен"]
+    assert s["diff"]["new_orders"][0]["category"] == "Обогреватели"
+    assert s["diff"]["new_risks"][0]["risk"] == "Дефицит неизбежен"
+    assert s["backtest"]["total"] == {"wape_sku_model": 66, "wape_sku_naive": 86, "wape_model": 41,
+                                      "wape_naive": 67, "bias_model": -7, "bias_naive": -4}
+    assert s["backtest"]["by_category"][0]["category"] == "Зернодробилки"
+    assert s["backtest"]["by_category"][0]["wape_sku_model"] == 57
+    assert s["low_reliability"] == [{"supplier_id": "SUP-000001", "fill_pct": 73, "orders_n": 8}]
+    text = ai.PROMPT_PATH.read_text(encoding="utf-8")
+    for part in ("merged_until_review", "wape_sku_model", "fill_pct", "не пиши в тексте названия полей"):
+        assert part in text
+
+
 def test_no_key_returns_reason_without_request(calls, tmp_path):
     log = calls(_llm("{}"))
     note = ai.analyst_note(_summary(), Config(), tmp_path / "cache")

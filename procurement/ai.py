@@ -17,6 +17,8 @@ from pathlib import Path
 
 import requests
 
+from .labels import CATEGORY_LABELS, RISK_LABELS, STATUS_LABELS
+
 log = logging.getLogger(__name__)
 
 TOP_N = 15
@@ -33,12 +35,32 @@ ITEM_KEYS = ("sku_id", "category", "supplier_id", "abc", "status", "order_qty", 
              "stockout_date", "cover_days", "stock_now", "in_transit_qty", "next_eta", "lead_days",
              "markup_12m", "sales_12m", "forecast_12m", "risk", "flags")
 EXPLAIN_KEYS = ("forecast_horizon", "safety", "stock_at_arrival", "transit", "gross", "uplift", "lot",
-                "lot_source", "final", "stock", "transit_lead", "forecast_lead", "arrival", "at",
-                "days_short", "lost_lead", "excess_qty")
+                "lot_source", "cap", "merged_until_review", "final", "stock", "transit_lead", "forecast_lead",
+                "arrival", "at", "days_short", "lost_lead", "excess_qty")
 ORDER_KEYS = ("sku_id", "category", "supplier_id", "abc", "order_qty", "order_by", "stockout_date",
               "cover_days", "risk")
 DIFF_N = 10
-BACKTEST_KEYS = ("category", "wape_model", "wape_naive", "bias_model", "bias_naive")
+# Точность — в процентах, как на дашборде; главная метрика — по SKU (D10), по сумме категории — для сведения.
+BACKTEST_KEYS = ("wape_sku_model", "wape_sku_naive", "wape_model", "wape_naive", "bias_model", "bias_naive")
+
+
+def _pct(v) -> int | None:
+    """Доля → целые проценты тем же округлением, что у дашборда (`site.fmt_pct`): 0.656 → 66."""
+    return None if v is None else int(f"{float(v) * 100:.0f}")
+
+
+def _ru(row: dict) -> dict:
+    """Коды категории, статуса и рисков → русские подписи дашборда: LLM переписывает их в текст как есть."""
+    out = dict(row)
+    if "category" in out:
+        out["category"] = CATEGORY_LABELS.get(out["category"], out["category"])
+    if "status" in out:
+        out["status"] = STATUS_LABELS.get(out["status"], out["status"])
+    if isinstance(out.get("risk"), list):
+        out["risk"] = [RISK_LABELS.get(x, x) for x in out["risk"]]
+    elif isinstance(out.get("risk"), str):
+        out["risk"] = RISK_LABELS.get(out["risk"], out["risk"])
+    return out
 
 
 def read_secret(name: str) -> str:
@@ -64,7 +86,9 @@ def _short_item(r: dict, with_explain: bool = False) -> dict:
     if with_explain:
         ex = r.get("explain") or {}
         out["explain"] = {k: ex[k] for k in EXPLAIN_KEYS if ex.get(k) is not None}
-    return out
+        if ex.get("lot_source") != "потолок":
+            out["explain"].pop("cap", None)  # потолок нужен только там, где он сработал
+    return _ru(out)
 
 
 def _primary_risk(r: dict) -> int:
@@ -96,7 +120,10 @@ def _top_risks(items: list[dict]) -> list[dict]:
 
 def build_summary(plan_json: dict, diff: dict, backtest: dict) -> dict:
     """Компактный вход для LLM (≤ ~8 тыс. токенов): KPI, топ к заказу, топ рисков с расшифровкой,
-    изменения с прошлого прогона, календарь, просроченные заказы, надёжность, точность прогноза."""
+    изменения с прошлого прогона, календарь, просроченные заказы, надёжность, точность прогноза.
+
+    Категории, статусы и риски — русскими подписями дашборда, доли — целыми процентами, как на
+    дашборде: LLM переписывает их как есть, и записка не расходится со страницей."""
     items = plan_json.get("items", [])
     orders = sorted((r for r in items if r.get("status") == "order_now"),
                     key=lambda r: (-(r.get("order_qty") or 0), r["sku_id"]))
@@ -105,7 +132,8 @@ def build_summary(plan_json: dict, diff: dict, backtest: dict) -> dict:
     for key in ("new_orders", "dropped_orders", "changed", "new_risks"):
         rows = list(diff.get(key) or [])
         diff_out[f"{key}_count"] = len(rows)
-        diff_out[key] = rows[:DIFF_N]
+        diff_out[key] = [_ru(r) for r in rows[:DIFF_N]]
+    # сначала самый сильный недовоз (меньшая доля привезённого)
     weak = sorted((r for r in plan_json.get("reliability", []) if (r.get("uplift") or 1) > 1),
                   key=lambda r: r.get("fill_ratio") or 0)
     bt = backtest or {}
@@ -117,10 +145,12 @@ def build_summary(plan_json: dict, diff: dict, backtest: dict) -> dict:
         "top_risks": [_short_item(r, with_explain=True) for r in _top_risks(items)],
         "diff": diff_out,
         "stale_po": list(plan_json.get("stale_po", []))[:5],
-        "low_reliability": [{"supplier_id": r.get("supplier_id"), "fill_ratio": round(r.get("fill_ratio") or 0, 3),
+        "low_reliability": [{"supplier_id": r.get("supplier_id"), "fill_pct": _pct(r.get("fill_ratio") or 0),
                              "orders_n": r.get("orders_n")} for r in weak[:5]],
-        "backtest": {"by_category": [{k: c.get(k) for k in BACKTEST_KEYS} for c in bt.get("by_category", [])],
-                     "total": {k: v for k, v in (bt.get("total") or {}).items() if k in BACKTEST_KEYS}},
+        "backtest": {"by_category": [{"category": CATEGORY_LABELS.get(c.get("category"), c.get("category")),
+                                      **{k: _pct(c.get(k)) for k in BACKTEST_KEYS}}
+                                     for c in bt.get("by_category", [])],
+                     "total": {k: _pct((bt.get("total") or {}).get(k)) for k in BACKTEST_KEYS}},
     }
 
 
