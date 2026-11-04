@@ -131,6 +131,7 @@ def test_summary_speaks_dashboard_language():
     s = ai.build_summary(plan, diff, bt)
     top = next(r for r in s["top_risks"] if r["sku_id"] == merged["sku_id"])
     assert top["explain"]["merged_until_review"] == 1900 and top["explain"]["final"] == top["order_qty"] == 3800
+    assert top["explain"]["final_before_merge"] == 1900  # округлённая потребность — готовым числом
     assert "cap" not in top["explain"]  # потолок — только там, где сработал
     assert top["category"] == "Обогреватели" and top["status"] == "Заказать сейчас"
     assert top["risk"] == ["Дефицит неизбежен"]

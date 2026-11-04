@@ -88,6 +88,9 @@ def _short_item(r: dict, with_explain: bool = False) -> dict:
         out["explain"] = {k: ex[k] for k in EXPLAIN_KEYS if ex.get(k) is not None}
         if ex.get("lot_source") != "потолок":
             out["explain"].pop("cap", None)  # потолок нужен только там, где он сработал
+        if ex.get("merged_until_review") and ex.get("final") is not None:
+            # округлённая потребность до добавления следующего заказа (D11) — готовым числом: LLM не досчитывает
+            out["explain"]["final_before_merge"] = int(ex["final"]) - int(ex["merged_until_review"])
     return _ru(out)
 
 
