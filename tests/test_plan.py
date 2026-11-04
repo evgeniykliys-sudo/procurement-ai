@@ -429,3 +429,39 @@ def test_lot_rounding_limited_to_one_month_of_demand(make_dataset):
     assert r["explain"]["lot_source"] == "шаг" and r["order_qty"] == 250
     r3 = row(plan_of(ds, Config(lot_max_overage_months=3)), "L")
     assert r3["explain"]["lot_source"] == "партия" and r3["order_qty"] == 500
+
+
+def test_physical_projection_matches_day_by_day_lost_sales():
+    """D12: «отражение в нуле» = подневная симуляция с потерянными продажами при нуле."""
+    import numpy as np
+    from procurement.plan import physical
+    rng = np.random.default_rng(7)
+    dem = rng.uniform(0, 5, 200)
+    arr = np.zeros(201)
+    arr[[0, 40, 120]] = [20, 150, 60]
+    p_debt = 10 + np.cumsum(arr) - np.r_[0.0, np.cumsum(dem)]
+    s, want = 10 + arr[0], []
+    for t in range(201):
+        want.append(s)
+        if t < 200:
+            s = max(s - dem[t], 0.0) + arr[t + 1]
+    assert physical(p_debt, dem) == pytest.approx(want)
+
+
+def test_lost_demand_before_transit_is_not_paid_from_it(make_dataset):
+    """D12: товар кончится на 9-й день, партия в пути придёт 15.02, новый заказ — через 90 дн.
+    Продажи в разрыве потеряны: партия их не «гасит», к приходу заказа на складе её остаток."""
+    cfg = Config()
+    # 400 шт. в пути закрывают спрос до марта — заказывать сейчас не нужно (было: «сейчас, 200 шт.»)
+    ds = build(make_dataset, sku("SKU-X", qty=100, stock=30, transit=[("2024-02-15", 400)], lead=90))
+    r = build_plan(ds, build_demand(ds, cfg, AS_OF), cfg, AS_OF).items.iloc[0]
+    assert r["status"] == "order_later" and r["order_by"] > date(2024, 2, 15)
+    # 250 шт. в пути: заказ сейчас, но к его приходу на складе ≈ 100 шт. от партии, а не 0 «в долг»
+    ds = build(make_dataset, sku("SKU-Y", qty=100, stock=30, transit=[("2024-02-15", 250)], lead=90))
+    r = build_plan(ds, build_demand(ds, cfg, AS_OF), cfg, AS_OF).items.iloc[0]
+    e = r["explain"]
+    assert r["status"] == "order_now"
+    assert e["lost_to_arrival"] > 100 and e["stock_at_arrival"] > 90
+    assert e["stock_at_arrival"] == pytest.approx(
+        e["stock"] + e["transit_lead"] - e["forecast_lead"] + e["lost_to_arrival"], abs=0.2)
+    assert e["gross"] == pytest.approx(e["forecast_horizon"] + e["safety"] - e["stock_at_arrival"] - e["transit"], abs=0.11)

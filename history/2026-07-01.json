@@ -561,7 +561,7 @@
 {"sku_id": "SKU-E058E6", "status": "review_price", "order_qty": 0, "risk": ["deficit_unavoidable"], "category": "space_heaters", "supplier_id": "SUP-7F2DC0"},
 {"sku_id": "SKU-E27CE0", "status": "order_later", "order_qty": 100, "risk": ["excess"], "category": "space_heaters", "supplier_id": "SUP-7416CE"},
 {"sku_id": "SKU-ED0D18", "status": "order_later", "order_qty": 150, "risk": ["excess"], "category": "space_heaters", "supplier_id": "SUP-63F7EE"},
-{"sku_id": "SKU-FE79E7", "status": "order_later", "order_qty": 800, "risk": ["deficit_unavoidable", "excess"], "category": "space_heaters", "supplier_id": "SUP-7416CE"},
+{"sku_id": "SKU-FE79E7", "status": "order_later", "order_qty": 750, "risk": ["deficit_unavoidable", "excess"], "category": "space_heaters", "supplier_id": "SUP-7416CE"},
 {"sku_id": "SKU-0025ED", "status": "dead_close", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": "SUP-4E171A"},
 {"sku_id": "SKU-04A55B", "status": "dead_close", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": null},
 {"sku_id": "SKU-112348", "status": "dead_close", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": null},

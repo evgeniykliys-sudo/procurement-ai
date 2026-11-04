@@ -10,7 +10,9 @@
   прежнее z × σ × √((L+R)/30);
 - потребность (D06: спрос до прихода при нулевом остатке потерян и не дозаказывается) =
   прогноз(L..L+R) + страховой − остаток к приходу − в пути с приходом в (L; L+R], где
-  остаток к приходу = max(0, остаток + в пути до L − прогноз(0..L));
+  остаток к приходу — физический (D12): остаток + в пути до L − продажи до L, а продажи при нуле
+  потеряны и тогда, когда после дефицита приходит партия в пути (она не уходит на потерянный спрос);
+  без такой партии это max(0, остаток + в пути до L − прогноз(0..L));
   > 0 → × поправка на недовоз, вверх до кратности партии — медианы приходов, если она не больше
   половины годового прогноза и округление добавляет не больше `lot_max_overage_months` мес. спроса
   (D05, D08), иначе до шага `lot_rounding` по величине заказа;
@@ -22,9 +24,8 @@
   не дожить), иначе — позже: количество оценивается тем же расчётом на дату заказа;
 - мёртвые (нет продаж `dead_months` мес) и наценка ниже порога или не проставлена — не в заказ.
 
-Проекция для «заказать до» — «в долг» до L и с обнулением недостачи в день L (та же арифметика,
-что в формуле потребности); поэтому «заказать сейчас» всегда даёт количество > 0. Физический остаток (с обрезкой: продажи при нуле
-потеряны) — для «дней без товара» и графика.
+Одна физическая проекция остатка (`physical`, D12: продажи при нуле потеряны) — для «хватит до»,
+«заказать до», количества, повторных заказов календаря, «дней без товара» и графика.
 """
 from __future__ import annotations
 
@@ -130,6 +131,17 @@ def robust_sigma(ds: Dataset, demand: DemandResult, ids: list, month0: pd.Period
     return np.maximum(SIGMA_MAD_FACTOR * mad, np.sqrt(np.maximum(base, 0)))
 
 
+def physical(p_debt: np.ndarray, dem: np.ndarray) -> np.ndarray:
+    """Физический остаток на начало дня t (после приходов дня) по проекции «в долг» (D12).
+
+    `p_debt[..., t]` = остаток + приходы дней ≤ t − спрос дней < t (длина D+1), `dem` — спрос по дням
+    (длина D). Продажи при нуле потеряны: недостача конца дня копится как потерянный спрос и к
+    проекции прибавляется (отражение в нуле) — партия, пришедшая после дефицита, на него не уходит."""
+    lost_end = np.maximum.accumulate(np.maximum(dem - p_debt[..., :-1], 0.0), axis=-1)  # к концу дня t
+    zero = np.zeros(lost_end.shape[:-1] + (1,))
+    return p_debt + np.concatenate([zero, lost_end], axis=-1)
+
+
 def _round_lot(qty: float, lot: int) -> int:
     if qty <= 0:
         return 0
@@ -191,16 +203,9 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
     cum_dem = np.hstack([np.zeros((n, 1)), np.cumsum(daily, axis=1)])  # спрос дней < t
     cum_arr = np.cumsum(arr_d, axis=1)                                   # приходы дней ≤ t
     p_start = stock[:, None] + cum_arr - cum_dem   # остаток на начало дня t после приходов, «в долг»
-    phys_end = np.empty((n, D))                    # физический остаток на конец дня
-    lost_cum = np.empty((n, D))                    # накопленный неудовлетворённый спрос к концу дня
-    s = stock.astype(float)
-    lost = np.zeros(n)
-    for t in range(D):
-        avail = s + arr_d[:, t]
-        lost += np.maximum(daily[:, t] - avail, 0.0)
-        s = np.maximum(avail - daily[:, t], 0.0)
-        phys_end[:, t] = s
-        lost_cum[:, t] = lost
+    phys_start = physical(p_start, daily)          # физический: продажи при нуле потеряны (D12)
+    lost_cum = phys_start[:, 1:] - p_start[:, 1:]  # накопленный неудовлетворённый спрос к концу дня
+    phys_end = np.maximum(p_start[:, :D] - daily + lost_cum, 0.0)  # физический остаток на конец дня
     lost_min = max(float(cfg.stockout_min_lost_qty), EPS)
 
     e_days = min(_days_until(as_of, cfg.excess_cover_months), D)
@@ -254,16 +259,19 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
 
     def need_at(i: int, d: int, proj: np.ndarray, carr: np.ndarray | None = None) -> dict:
         """Потребность заказа, размещённого на день d (0 — сегодня): приход в день a = d + L.
-        forecast_lead / transit_lead — спрос и приходы до a, stock_at_arrival — остаток к приходу
-        (недостача обнуляется: продажи при нуле потеряны), forecast_horizon / transit — покрытие (a; a+R].
-        `carr` — накопленные приходы SKU (по умолчанию — заказы в пути; для повторных заказов — с ними)."""
+        forecast_lead / transit_lead — спрос и приходы до a; stock_at_arrival — физический остаток к
+        приходу (`proj` — физическая проекция, D12: продажи при нуле потеряны, в том числе до прихода
+        партий в пути — партия не уходит на потерянный спрос); lost_to_arrival — сколько спроса до
+        прихода потеряно; forecast_horizon / transit — покрытие (a; a+R]. `carr` — накопленные приходы
+        SKU (по умолчанию — заказы в пути; для повторных заказов — с ними, `proj` — тоже с ними)."""
         L, R = int(lead[i]), int(cover_target[i])
         carr = cum_arr[i] if carr is None else carr
         a, end = min(d + L, D), min(d + L + R, D)
         f_lead = _r1(cum_dem[i, a] - cum_dem[i, d])
         t_lead = int(round(carr[a] - (carr[d] if d > 0 else 0.0)))
-        st = int(stock[i]) if d == 0 else _r1(proj[a] - t_lead + f_lead)
-        at_arrival = max(0.0, _r1(st + t_lead - f_lead))
+        st = int(stock[i]) if d == 0 else _r1(proj[d])
+        at_arrival = max(0.0, _r1(proj[a]))
+        lost_to_arrival = max(0.0, _r1(at_arrival - (st + t_lead - f_lead)))
         f_h = _r1(cum_dem[i, end] - cum_dem[i, a])
         tr = int(round(carr[end] - carr[a]))
         saf = _r1(safety_t[i, a])
@@ -279,7 +287,8 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
             final, lot_source = cap, "потолок"
         return {"forecast_horizon": f_h, "safety": saf, "safety_cover": _r1(s_cover[i, a]),
                 "safety_lead": _r1(s_lead[i, a]), "safety_cap": _r1(safety_cap[i, a]),
-                "typical_lot": int(lots[i]), "stock_at_arrival": at_arrival, "transit": tr,
+                "typical_lot": int(lots[i]), "stock_at_arrival": at_arrival,
+                "lost_to_arrival": lost_to_arrival, "transit": tr,
                 "gross": gross, "uplift": float(round(uplift[i], 4)), "lot": lot, "final": final,
                 "lot_source": lot_source, "cap": cap,
                 "stock": st, "transit_lead": t_lead, "forecast_lead": f_lead,
@@ -289,14 +298,15 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
     def orders_from(i: int, d: int, q: int, proj: np.ndarray) -> list[tuple[int, int]]:
         """Заказы SKU в окне календаря: первый (день d, q шт.) и повторные — [(день, шт.)]."""
         L = int(lead[i])
-        p2, c2 = proj.copy(), cum_arr[i].copy()
+        debt, c2, p2 = p_start[i].copy(), cum_arr[i].copy(), proj
         out = []
         while d < cal_days:
             if q > 0:
                 out.append((d, q))
                 a = min(d + L, D)
-                p2[a:] += max(0.0, -p2[a]) + q   # недостача к приходу потеряна; приход заказа
+                debt[a:] += q                    # приход заказа — в проекцию «в долг»,
                 c2[a:] += q
+                p2 = physical(debt, daily[i])    # физическая — заново: недостача до прихода потеряна
                 start = a + 1
             else:
                 start = d + L + 1
@@ -322,9 +332,9 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         # «заказать до»: первый день t ≥ L, когда остаток ниже страхового и приходы уже
         # размещённых заказов не поднимают его обратно до t + R; минус L
         cross_t = None
-        # проекция для заказа: «в долг» до L, в день L недостача обнуляется (спрос разрыва потерян)
-        proj = p_start[i].copy()
-        proj[min(L, D):] += max(0.0, -p_start[i, min(L, D)])
+        # проекция для заказа — физическая (D12): продажи при нуле потеряны и до прихода заказа, и до
+        # прихода партий в пути — партия в пути не уходит на погашение потерянного спроса
+        proj = phys_start[i]
         if has_demand:
             hit = np.flatnonzero(lost_cum[i] >= lost_min - EPS)
             stockout_t = int(hit[0]) if hit.size else None

@@ -288,7 +288,10 @@
     var rows = [
       exRow("", "Прогноз спроса на окне покрытия", "от прихода заказа " + fdate(e.arrival) + " ещё R = " + n0(R) + " дн.", n1(e.forecast_horizon)),
       exRow("+", "Страховой запас", "z = " + (e.z === null || e.z === undefined ? "—" : e.z.toFixed(2).replace(".", ",")) + " · σ = " + n1(e.sigma_monthly) + " шт./мес по сезону окон: √(покрытие " + n1(e.safety_cover) + "² + плечо " + n1(e.safety_lead) + "²)" + (e.safety_cap !== undefined && e.safety <= e.safety_cap + 0.05 && Math.sqrt(Math.pow(e.safety_cover || 0, 2) + Math.pow(e.safety_lead || 0, 2)) > e.safety_cap + 0.05 ? ", не больше " + n0(cfg.safety_cap_months || 2) + " мес. спроса покрытия = " + n1(e.safety_cap) : ""), n1(e.safety)),
-      exRow("−", "Остаток к приходу заказа", "max(0; остаток " + n0(e.stock) + " + в пути до прихода " + n0(e.transit_lead) + " − прогноз до прихода " + n1(e.forecast_lead) + ")", n1(e.stock_at_arrival)),
+      exRow("−", "Остаток к приходу заказа", (e.lost_to_arrival > 0.05 && e.stock_at_arrival > 0.05
+        // товар кончался, потом пришла партия в пути: потерянные продажи с неё не списываются (D12)
+        ? "остаток " + n0(e.stock) + " + в пути до прихода " + n0(e.transit_lead) + " − продажи до прихода " + n1(e.forecast_lead - e.lost_to_arrival) + " (прогноз " + n1(e.forecast_lead) + ", из них " + n1(e.lost_to_arrival) + " потеряно, пока товара не было: партия в пути на них не уходит)"
+        : "max(0; остаток " + n0(e.stock) + " + в пути до прихода " + n0(e.transit_lead) + " − прогноз до прихода " + n1(e.forecast_lead) + ")"), n1(e.stock_at_arrival)),
       exRow("−", "В пути с приходом в окно покрытия", "", n0(e.transit)),
       exRow("=", "Потребность", "", n1(e.gross), "sub")
     ];
