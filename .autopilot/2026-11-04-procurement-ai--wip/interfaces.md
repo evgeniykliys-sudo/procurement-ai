@@ -98,3 +98,31 @@
 ## Что построили законченные таски
 
 (дописывается по мере работы)
+
+### Таск 01 (фундамент) — фактические интерфейсы
+- `Config`: все поля из списка выше + `season_own_weight=0.5`, `lot_rounding=((100,10),(1000,50),(inf,100))`, `reliability_receipt_window_days=180`; `reliability_max_uplift=1.2`.
+- `Dataset(sku, sales, stock, po, receipts, suppliers)`; `DataError`; месяцы — `Period[M]`, даты — `datetime.date`. `po_id` бывает `None` (23 строки).
+- `cut_dataset`: у заказов в пути ещё и `qty_received := 0`; убирает карточки, заведённые после даты без продаж; пересчитывает в `sku` first/last_sale_month, months_with_sales, qty_total, avg_markup_pct_12m, on_order_qty.
+- `DemandResult.per_sku`: `sku_id, category, base_monthly, trend, sigma_monthly, history_months, censored_months, sales_12m, orders_12m, returns_12m, rank_in_category, flags`. **Колонку флагов брать только `df["flags"]`** — `df.flags` это атрибут pandas. Флаги: «мало истории», «нет продаж {dead_months} мес», «весь год без остатка».
+- `forecast[sku_id, period, qty(float)]`; `stock_on -> Series[int]`.
+- `in_transit -> (arrivals[sku_id, po_id, supplier_id, eta, qty, late, promised_date], stale[po_id, sku_id, supplier_id, promised_date, qty_pending, days_overdue])`.
+- `supplier_reliability -> [supplier_id, fill_ratio, orders_n, uplift, qty_ordered, qty_received]` (qty_received — по receipts.csv, D01).
+- `lot_size(ds, cfg=None) -> Series[int]`.
+- На 2026-08-13: в пути 22 строки / 17 127 шт., опаздывают 5, stale 4; мёртвых по продажам 331.
+- **Таску 02:** SKU с `supply_type = unknown` → плечо помечать «оценочное» независимо от `lead_source` (R34i).
+- Ремонт таска 01: в `Config` ещё `season_outlier_factor=2.0`, `level_min_season_index=0.5`, `forecast_cap_vs_last_year=2.0`. Новые флаги `per_sku["flags"]`: «уровень по 24 мес», «уровень без сезонной поправки», «упущенный спрос — проверить» (D03: прогноз на 12 мес ≤ 2× sales_12m при истории ≥ 12; у 71 SKU на 2026-08-13). Профиль категории — по суммарному ряду категории с обрезкой выбросов; уровень новинки — медиана.
+- Бэктест-ориентир (cut 2025-08-01, WAPE модель/наивный): space_heaters 0.56/0.98, string_trimmers 0.36/0.93, trimmer_blades 0.38/0.96, concrete_mixers 0.47/0.48, sanitary_faucets 0.35/0.26, grain_mills 1.18/0.65.
+
+### Таск 02 (решение) — фактические интерфейсы
+- `build_plan(ds, demand, cfg, as_of) -> Plan`; в `Plan` ещё `arrivals`, `series{sku_id: {history, forecast, stock_proj}}`, `config`.
+- `items` — колонки из списка выше + `supply_type, weight_kg, sales_12m, orders_12m, returns_12m, rank_in_category, trend, base_monthly, sigma_monthly (устойчивая σ, D04), history_months, forecast_12m`. У `order_later` `order_qty` — оценка на дату `order_by` (`explain.at`).
+- **`explain` (фактическая схема, D06):** `forecast_horizon` (прогноз L..L+R), `safety`, `stock_at_arrival` = max(0, `stock` + `transit_lead` − `forecast_lead`), `transit` (приходы в (L; L+R]), `gross = forecast_horizon + safety − stock_at_arrival − transit`, `uplift`, `lot`, `lot_source` («партия»|«шаг»), `final` (= order_qty); справочно `stock, transit_lead, forecast_lead, arrival, at, horizon_days, z, sigma_monthly, excluded, would_order, days_short, excess_qty`. «Почему столько» на дашборде раскладывается именно так.
+- `plan_to_json(plan)` → `{as_of, generated_at, kpi, items, supplier_orders, calendar, stale_po, reliability, arrivals, config, series}`. Ключи `kpi`: `order_now_positions, order_now_qty, order_now_suppliers, order_now_no_supplier, deficit_unavoidable, deficit_if_late, excess, review_price, low_markup, no_cost, running_out, dead, dead_sell, dead_close, in_transit_future_qty` и др.
+- Флаги плана: «нет себестоимости», «низкая наценка», «скоро кончится», «плечо оценочное», «партия больше годового спроса».
+- `run_backtest(...)` → `{by_category, total, series, actual, model, naive, cut, months}`. `history_index(dir) -> [{as_of, file, kpi}]`; `diff_runs` → + `as_of, prev_as_of`.
+- CLI: `run [--raw] [--as-of] [--no-ai] [--notify] [--config] [--history] [--out] [--site]` пишет `out/plan.json, out/backtest.json, out/diff.json, out/note.json`, `history/<as_of>.json`, `site/`; `compute_plan(raw, cfg, as_of)`; `--as-of` раньше данных → `cut_dataset`. `seed-history`.
+- Ремонт таска 02: `Config` + `stockout_min_lost_qty=1`, `min_order_qty=1`, `safety_cap_months=2`. `items.cover_days`, `rank_in_category` — int|None. `explain` + `lost_lead` (потеряно до as_of+L), `cap`; `lot_source` ещё «потолок». `stockout_date`/`cover_days` — первый день, когда потеряно ≥ 1 шт.; `cover_days = None` — не кончается за горизонт проекции («хватит > 2 лет»).
+- `supplier_orders[supplier_id ("—" если не заведён), supplier_label, sku_id, order_qty, weight_kg, order_by, expected_arrival]` — на сайте показывать `supplier_label`.
+- `calendar` — с повторными заказами по каждому SKU на 6 мес: `[month, positions, qty]`.
+- `history/<as_of>.json` = `{as_of, kpi, items:[{sku_id, status, order_qty, risk, category, supplier_id}]}` (~119 КБ, побайтно стабилен).
+- KPI 2026-08-13: к заказу сейчас 189 поз. / 43 066 шт. / 18 поставщиков (+2 без поставщика); дефицит неизбежен 205, если опоздать 16; излишки 84; позже 90; на пересмотр 115 (68+47); мёртвых 331.
