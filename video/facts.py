@@ -70,9 +70,10 @@ def facts() -> dict:
         "dead_sell": num(k["dead_sell"]),
         "dead_close": num(k["dead_close"]),
         "in_transit_future_qty": num(k["in_transit_future_qty"]),
-        "wape_model": _pct(bt["total"]["wape_model"]),
-        "wape_naive": _pct(bt["total"]["wape_naive"]),
-        "bt_better": sum(1 for c in bt["by_category"] if c["wape_model"] < c["wape_naive"]),
+        # главная метрика дашборда — ошибка по SKU (D10); по сумме категории — только для сведения
+        "wape_model": _pct(bt["total"]["wape_sku_model"]),
+        "wape_naive": _pct(bt["total"]["wape_sku_naive"]),
+        "bt_better": sum(1 for c in bt["by_category"] if c["wape_sku_model"] < c["wape_sku_naive"]),
         "bt_cats": len(bt["by_category"]),
         "diff_prev": diff.get("prev_as_of") or "",
         "diff_new_orders": num(diff.get("new_orders_count", len(diff.get("new_orders", [])))),
