@@ -600,7 +600,7 @@
       "type": "browser",
       "screen": "Браузер: GitHub → Actions → прогон «План закупок» (plan → deploy → notify), запущенный по кнопке",
       "text": "Регулярный запуск: на вкладке Actions — Run workflow, или прогон идёт сам каждое утро. Через пару минут на GitHub Pages уже обновлённый дашборд.",
-      "url": "https://github.com/evgeniykliys-sudo/procurement-ai/actions/runs/41839726792",
+      "url": "https://github.com/evgeniykliys-sudo/procurement-ai/actions/runs/41852978051",
       "cursor": false
     },
     {
