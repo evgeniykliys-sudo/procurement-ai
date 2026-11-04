@@ -1,0 +1,613 @@
+{# Дашборд закупщика. Данные — из build_site (_view); интерактив — assets/app.js по data/data.js. #}
+{% set DEADS = ("dead_sell", "dead_close", "no_demand") %}
+{% macro status_badge(s) %}<span class="badge st-{{ s }}">{{ STATUS.get(s, s) }}</span>{% endmacro %}
+{% macro risk_badges(rs) %}{% for r in rs or [] %}<span class="badge rk-{{ r }}">{{ RISK.get(r, r) }}</span>{% endfor %}{% endmacro %}
+{% macro flag_badges(fs, only=None) %}{% for f in fs or [] %}{% if not only or f in only %}<span class="flag{% if f in ('скоро кончится',) %} flag-hot{% elif f in ('нет себестоимости', 'низкая наценка') %} flag-warn{% endif %}">{{ f }}</span>{% endif %}{% endfor %}{% endmacro %}
+{% macro cover(r) %}{% if r.cover_days is not none %}{{ r.cover_days|int }}{% elif r.status in DEADS %}—{% else %}&gt;&nbsp;{{ cfg.forecast_months }}&nbsp;мес{% endif %}{% endmacro %}
+{% macro cover_v(r) %}{% if r.cover_days is not none %}{{ r.cover_days }}{% elif r.status in DEADS %}-1{% else %}99999{% endif %}{% endmacro %}
+{% macro sup(r) %}{{ r.supplier_id or "не заведён" }}{% endmacro %}
+{% macro skucell(id) %}<td class="sku"><span class="sku-link">{{ id }}</span></td>{% endmacro %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>План закупок · данные на {{ as_of|date }}</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <div class="brand">
+      <div class="brand-title">План закупок</div>
+      <div class="brand-sub">Дистрибьютор инструмента и оборудования · {{ skus_total|int }} SKU · {{ categories|length }} категорий · плечо поставки до {{ cfg.lead_max_days }} дн.</div>
+    </div>
+    <div class="stamp">
+      <span class="stamp-main">Данные на {{ as_of|date }}</span>
+      <span class="stamp-sep">·</span>
+      <span class="stamp-run">пересчитано {{ generated_at|datetime }}</span>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <div class="wrap tabs-in">
+      <a class="tab" href="#summary" data-tab="summary"><span>Сводка</span></a>
+      <a class="tab" href="#orders" data-tab="orders"><span>К заказу</span><b class="tab-count">{{ kpi.order_now_positions|int }}</b></a>
+      <a class="tab" href="#skus" data-tab="skus"><span>Все SKU</span><b class="tab-count">{{ skus_total|int }}</b></a>
+      <a class="tab" href="#risks" data-tab="risks"><span>Риски</span><b class="tab-count tc-red">{{ kpi.deficit_unavoidable|int }}</b></a>
+      <a class="tab" href="#review" data-tab="review"><span>На пересмотр цены</span><b class="tab-count">{{ kpi.review_price|int }}</b></a>
+      <a class="tab" href="#dead" data-tab="dead"><span>Мёртвый ассортимент</span><b class="tab-count">{{ kpi.dead|int }}</b></a>
+      <a class="tab" href="#accuracy" data-tab="accuracy"><span>Точность прогноза</span></a>
+      <a class="tab" href="#method" data-tab="method"><span>Методика и параметры</span></a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+
+{# ============================== СВОДКА ============================== #}
+<section class="panel" id="panel-summary" data-panel="summary">
+  <div class="decision">
+    <div class="decision-main">
+      <div class="eyebrow">Заказать сейчас</div>
+      <div class="decision-head">
+        <b>{{ kpi.order_now_positions|int }} позиций · {{ kpi.order_now_qty|int }} шт.</b>
+        <span>у {{ kpi.order_now_suppliers|int }} поставщиков{% if kpi.order_now_no_supplier %} + {{ kpi.order_now_no_supplier|int }} поз. без поставщика{% endif %}</span>
+      </div>
+      <div class="decision-sub">
+        {% if groups %}Разместить с {{ groups[0].place_by|date }} до следующего пересмотра (раз в {{ cfg.review_period_days }} дн.) ·
+        приход ожидается {{ arrival_first|date }} — {{ arrival_last|date }}{% endif %}
+        · следующие заказы: {{ kpi.order_later_positions|int }} поз. в ближайшие месяцы
+      </div>
+    </div>
+    <div class="decision-actions">
+      <a class="btn btn-primary" href="#orders">Заказы поставщикам</a>
+      <a class="btn" href="exports/orders_all.xlsx" download>Excel</a>
+      <a class="btn" href="exports/orders_all.csv" download>CSV</a>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <a class="kpi" href="#orders"><span class="kpi-label">Позиций к заказу сейчас</span><span class="kpi-value">{{ kpi.order_now_positions|int }}</span><span class="kpi-sub">ещё {{ kpi.order_later_positions|int }} — заказать позже</span></a>
+    <a class="kpi" href="#orders"><span class="kpi-label">Штук к заказу</span><span class="kpi-value">{{ kpi.order_now_qty|int }}</span><span class="kpi-sub">уже в пути {{ kpi.in_transit_future_qty|int }} шт.</span></a>
+    <a class="kpi" href="#orders"><span class="kpi-label">Поставщиков</span><span class="kpi-value">{{ kpi.order_now_suppliers|int }}</span><span class="kpi-sub">{% if kpi.order_now_no_supplier %}+ {{ kpi.order_now_no_supplier|int }} поз. без поставщика{% else %}все позиции с поставщиком{% endif %}</span></a>
+    <a class="kpi kpi-red" href="#risks"><span class="kpi-label">Дефицит неизбежен</span><span class="kpi-value">{{ kpi.deficit_unavoidable|int }}</span><span class="kpi-sub">ещё {{ kpi.deficit_if_late|int }} — если опоздать с заказом</span></a>
+    <a class="kpi kpi-violet" href="#risks-excess"><span class="kpi-label">Излишки</span><span class="kpi-value">{{ kpi.excess|int }}</span><span class="kpi-sub">запас больше {{ cfg.excess_cover_months }} мес. спроса</span></a>
+    <a class="kpi kpi-amber" href="#review"><span class="kpi-label">На пересмотр цены</span><span class="kpi-value">{{ kpi.review_price|int }}</span><span class="kpi-sub">{{ kpi.review_low_markup|int }} низкая наценка · {{ kpi.review_no_cost|int }} без себестоимости</span></a>
+    <a class="kpi kpi-gray" href="#dead"><span class="kpi-label">Мёртвый ассортимент</span><span class="kpi-value">{{ kpi.dead|int }}</span><span class="kpi-sub">{{ kpi.dead_sell|int }} распродать · {{ kpi.dead_close|int }} закрыть</span></a>
+  </div>
+
+  <div class="grid g-main">
+    <div class="card">
+      <div class="card-head">
+        <h2>Заказы поставщикам — разместить сейчас</h2>
+        <a class="link" href="#orders">все позиции →</a>
+      </div>
+      <div class="tbl-wrap">
+      <table class="tbl sortable compact nowrap">
+        <thead><tr>
+          <th>Поставщик</th><th class="n" data-type="num">Позиций</th><th class="n" data-type="num">Штук</th>
+          <th data-type="date">Разместить до</th><th data-type="date">Ожидаемый приход</th><th class="n" data-type="num">Дефицит</th><th class="nosort">Файл</th>
+        </tr></thead>
+        <tbody>
+        {% for g in groups %}
+          <tr>
+            <td><a class="sup-link" href="#{{ g.anchor }}">{{ g.label }}</a>{% if g.low_reliability %} <span class="mini-warn" title="Доля исполнения заказов {{ g.fill_ratio|pct }} — к заказу добавлена поправка на недовоз">недовоз</span>{% endif %}</td>
+            <td class="n" data-v="{{ g.positions }}">{{ g.positions|int }}</td>
+            <td class="n strong" data-v="{{ g.qty }}">{{ g.qty|int }}</td>
+            <td data-v="{{ g.place_by }}">{{ g.place_by|date }}</td>
+            <td data-v="{{ g.arrival_first }}">{{ g.arrival_first|date }}{% if g.arrival_last != g.arrival_first %} — {{ g.arrival_last|date }}{% endif %}</td>
+            <td class="n" data-v="{{ g.deficit }}">{% if g.deficit %}<span class="txt-red">{{ g.deficit }}</span>{% else %}<span class="muted">0</span>{% endif %}</td>
+            <td><a class="dl" href="exports/{{ g.file }}" download>xlsx</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Календарь заказов на 6 месяцев</h2>
+        <span class="muted small">включая повторные заказы</span>
+      </div>
+      <div class="chart" id="chart-calendar" style="height:230px"></div>
+      <table class="tbl compact cal-table">
+        <thead><tr><th>Месяц</th><th class="n">Позиций</th><th class="n">Штук</th><th class="bar-col"></th></tr></thead>
+        <tbody>
+        {% for m in calendar %}
+          <tr{% if loop.first %} class="row-now"{% endif %}>
+            <td>{{ m.month|month }}{% if loop.first %} <span class="badge st-order_now">сейчас</span>{% endif %}</td>
+            <td class="n">{{ m.positions|int }}</td>
+            <td class="n strong">{{ m.qty|int }}</td>
+            <td class="bar-col"><span class="hbar" style="width:{{ (100 * m.qty / cal_max)|round(1) }}%"></span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid g-2 top">
+    <div class="card note">
+      <div class="card-head">
+        <h2>Записка ИИ-аналитика</h2>
+        {% if note.ok %}<span class="ai-tag">сгенерировано ИИ ({{ note.model }}), числа — из расчёта системы</span>{% endif %}
+      </div>
+      {% if note.ok %}
+        <div class="md">{{ note_html|safe }}</div>
+      {% else %}
+        <div class="empty">ИИ-записка недоступна: {{ note.error or "нет данных" }}</div>
+        <p class="muted small">Всё остальное на дашборде посчитано без ИИ: количества, даты и риски не зависят от записки.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Что изменилось</h2>
+        {% if diff.prev_as_of %}<span class="muted small">по сравнению с прогоном на {{ diff.prev_as_of|date }}</span>{% endif %}
+      </div>
+      {% if diff.prev_as_of %}
+      <div class="stats">
+        <div class="stat"><b>{{ diff.new_orders|length }}</b><span>новых позиций к заказу</span></div>
+        <div class="stat"><b>{{ diff.dropped_orders|length }}</b><span>ушли из заказа</span></div>
+        <div class="stat"><b>{{ diff.changed|length }}</b><span>потребность изменилась &gt; {{ cfg.change_threshold_pct }}% <em class="muted">↑{{ diff.changed_up }} ↓{{ diff.changed_down }}</em></span></div>
+        <div class="stat"><b>{{ diff.new_risks_n }}</b><span>новых рисков</span></div>
+      </div>
+      <div class="grid g-2 inner">
+        <div>
+          <h3>Новые к заказу</h3>
+          <table class="tbl compact">
+            <tbody>
+            {% for r in diff.new_orders[:6] %}<tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td class="muted small">{{ r.category|cat }}</td><td class="n strong">{{ r.qty|int }} шт.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+          {% if diff.new_orders|length > 6 %}<div class="muted small more">и ещё {{ diff.new_orders|length - 6 }}</div>{% endif %}
+        </div>
+        <div>
+          <h3>Сильнее всего изменилась потребность</h3>
+          <table class="tbl compact">
+            <tbody>
+            {% for r in diff.changed[:6] %}<tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td class="n muted">{{ r.prev_qty|int }} → <b class="txt-ink">{{ r.qty|int }}</b></td><td class="n {{ 'txt-green' if r.pct > 0 else 'txt-red' }}">{{ "+" if r.pct > 0 }}{{ r.pct|num(0) }}%</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chips">
+        <span class="muted small">Новые риски:</span>
+        {% for r in diff.new_risks %}<span class="badge rk-{{ r.risk }}">{{ r.label }} · {{ r.n }}</span>{% endfor %}
+        {% if diff.dropped_orders %}<span class="muted small">· ушли из заказа:</span>{% for r in diff.dropped_orders[:4] %} <span class="sku-link" data-sku="{{ r.sku_id }}">{{ r.sku_id }}</span>{% endfor %}{% if diff.dropped_orders|length > 4 %} <span class="muted small">и ещё {{ diff.dropped_orders|length - 4 }}</span>{% endif %}{% endif %}
+      </div>
+      {% else %}
+        <div class="empty">Прошлого прогона нет — сравнивать не с чем. Сравнение появится после следующего пересчёта.</div>
+      {% endif %}
+      {% if history %}<div class="muted small history-line">Прогоны в истории: {% for h in history %}{{ h.as_of|date }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="grid g-2">
+    {% for title, rows, tone in (("Растут: тренд продаж за 12 мес к предыдущим 12", up, "green"), ("Падают: тренд продаж за 12 мес к предыдущим 12", down, "red")) %}
+    <div class="card">
+      <div class="card-head"><h2>{{ title.split(":")[0] }}</h2><span class="muted small">{{ title.split(": ")[1] }} · SKU с историей ≥ 24 мес</span></div>
+      <table class="tbl compact sortable">
+        <thead><tr><th>SKU</th><th>Категория</th><th class="n" data-type="num">Продажи 12 мес</th><th class="n" data-type="num">Тренд</th><th>Статус</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td class="n" data-v="{{ r.sales_12m }}">{{ r.sales_12m|int }}</td>
+          <td class="n txt-{{ tone }}" data-v="{{ r.trend }}">{{ "+" if r.trend > 1 }}{{ ((r.trend - 1) * 100)|num(0) }}%</td><td>{{ status_badge(r.status) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{# ============================== К ЗАКАЗУ ============================== #}
+<section class="panel" id="panel-orders" data-panel="orders" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>Заказы поставщикам</h1>
+      <p class="lead">Сейчас к заказу {{ kpi.order_now_positions|int }} позиций · {{ kpi.order_now_qty|int }} шт. у {{ kpi.order_now_suppliers|int }} поставщиков{% if no_supplier %} и {{ no_supplier.positions }} поз. без поставщика{% endif %}. Количество уже округлено до кратности партии; ожидаемый приход = дата размещения + плечо поставки.</p>
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="exports/orders_all.xlsx" download>Скачать Excel — все поставщики</a>
+      <a class="btn" href="exports/orders_all.csv" download>CSV</a>
+    </div>
+  </div>
+
+  {% for g in groups %}
+  <details class="supplier card" id="{{ g.anchor }}"{% if loop.index <= 2 %} open{% endif %}>
+    <summary>
+      <span class="sup-name">{{ g.label }}</span>
+      <span class="sup-meta"><b>{{ g.positions }}</b> поз.</span>
+      <span class="sup-meta"><b>{{ g.qty|int }}</b> шт.</span>
+      <span class="sup-meta">{{ g.weight }}</span>
+      <span class="sup-meta">разместить до <b>{{ g.place_by|date }}</b>{% if g.place_last != g.place_by %}…{{ g.place_last|date }}{% endif %}</span>
+      <span class="sup-meta">приход {{ g.arrival_first|date }}{% if g.arrival_last != g.arrival_first %} — {{ g.arrival_last|date }}{% endif %}</span>
+      {% if g.fill_ratio is not none %}<span class="sup-meta {{ 'txt-amber' if g.low_reliability }}">исполнение {{ g.fill_ratio|pct }}</span>{% endif %}
+      <a class="btn btn-sm" href="exports/{{ g.file }}" download onclick="event.stopPropagation()">Скачать Excel</a>
+    </summary>
+    <div class="tbl-wrap">
+    <table class="tbl sortable nowrap">
+      <thead><tr>
+        <th>SKU</th><th>Категория</th><th>ABC</th><th class="n" data-type="num">К заказу, шт.</th><th class="n" data-type="num">Кратность</th>
+        <th class="n" data-type="num">Вес, кг</th><th data-type="date">Разместить до</th><th data-type="date">Ожидаемый приход</th>
+        <th class="n" data-type="num">Остаток</th><th class="n" data-type="num">В пути</th><th data-type="date">Хватит до</th><th class="n" data-type="num">Плечо, дн.</th><th>Риски</th>
+      </tr></thead>
+      <tbody>
+      {% for o in g.rows %}{% set it = o.item %}
+        <tr data-sku="{{ o.sku_id }}">
+          {{ skucell(o.sku_id) }}<td>{{ it.category|cat }}</td><td>{{ it.abc }}</td>
+          <td class="n strong" data-v="{{ o.order_qty }}">{{ o.order_qty|int }}</td>
+          <td class="n muted" data-v="{{ it.explain.lot }}">{{ it.explain.lot|int }}</td>
+          <td class="n" data-v="{{ o.weight_kg if o.weight_kg is not none else -1 }}">{% if o.weight_kg is not none %}{{ o.weight_kg|num(0) }}{% else %}<span class="muted small">не заведён</span>{% endif %}</td>
+          <td data-v="{{ o.order_by }}">{{ o.order_by|date }}</td>
+          <td data-v="{{ o.expected_arrival }}">{{ o.expected_arrival|date }}</td>
+          <td class="n" data-v="{{ it.stock_now }}">{{ it.stock_now|int }}</td>
+          <td class="n" data-v="{{ it.in_transit_qty }}">{{ it.in_transit_qty|int }}</td>
+          <td data-v="{{ it.stockout_date or '9999' }}">{{ it.stockout_date|date }}</td>
+          <td class="n" data-v="{{ it.lead_days }}">{{ it.lead_days }}{% if 'плечо оценочное' in it.flags %} <span class="flag">оценочное</span>{% endif %}</td>
+          <td>{{ risk_badges(it.risk) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot><tr><td colspan="3">Итого</td><td class="n strong">{{ g.qty|int }}</td><td></td><td class="n small">{{ g.weight }}</td><td colspan="7"></td></tr></tfoot>
+    </table>
+    </div>
+  </details>
+  {% endfor %}
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Следующие заказы — «заказать позже»</h2>
+      <span class="muted small">{{ later|length }} поз.; количество — оценка на дату заказа, уточнится при пересчёте</span>
+    </div>
+    <div class="tbl-wrap scroll-y">
+    <table class="tbl sortable">
+      <thead><tr><th data-type="date">Заказать до</th><th>SKU</th><th>Категория</th><th>Поставщик</th><th class="n" data-type="num">Кол-во, шт.</th><th class="n" data-type="num">Остаток</th><th class="n" data-type="num">В пути</th><th data-type="date">Хватит до</th><th class="n" data-type="num">Плечо, дн.</th><th>Риски</th></tr></thead>
+      <tbody>
+      {% for r in later %}
+        <tr data-sku="{{ r.sku_id }}"><td data-v="{{ r.order_by }}" class="strong">{{ r.order_by|date }}</td>{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td>{{ sup(r) }}</td>
+        <td class="n" data-v="{{ r.order_qty }}">{{ r.order_qty|int }}</td><td class="n" data-v="{{ r.stock_now }}">{{ r.stock_now|int }}</td><td class="n" data-v="{{ r.in_transit_qty }}">{{ r.in_transit_qty|int }}</td>
+        <td data-v="{{ r.stockout_date or '9999' }}">{{ r.stockout_date|date }}</td><td class="n">{{ r.lead_days }}</td><td>{{ risk_badges(r.risk) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+{# ============================== ВСЕ SKU ============================== #}
+<section class="panel" id="panel-skus" data-panel="skus" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>Все SKU</h1>
+      <p class="lead">План по каждой позиции. Клик по строке — карточка SKU: график, расшифровка «почему столько», флаги.</p>
+    </div>
+    <div class="actions"><a class="btn" href="exports/plan_all.xlsx" download>Скачать Excel — весь план</a></div>
+  </div>
+  <div class="filters card">
+    <label class="f-search"><span>Поиск</span><input type="search" id="f-q" placeholder="SKU или поставщик" autocomplete="off"></label>
+    <label><span>Категория</span><select id="f-category"><option value="">Все</option>{% for c in categories %}<option value="{{ c }}">{{ c|cat }}</option>{% endfor %}</select></label>
+    <label><span>Статус</span><select id="f-status"><option value="">Все</option>{% for k, v in STATUS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    <label><span>Поставщик</span><select id="f-supplier"><option value="">Все</option></select></label>
+    <label><span>ABC</span><select id="f-abc"><option value="">Все</option><option>A</option><option>B</option><option>C</option></select></label>
+    <label><span>Риск</span><select id="f-risk"><option value="">Любой</option><option value="__any">Есть риск</option>{% for k, v in RISK.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    <button class="btn btn-ghost" id="f-reset" type="button">Сбросить</button>
+    <span class="f-count" id="f-count"></span>
+  </div>
+  <div class="card flush">
+    <div class="tbl-wrap scroll-y tall">
+      <table class="tbl" id="sku-table">
+        <thead><tr>
+          <th data-key="sku_id">SKU</th><th data-key="category">Категория</th><th data-key="supplier_id">Поставщик</th><th data-key="abc">ABC</th>
+          <th data-key="status">Статус</th><th class="n" data-key="order_qty">К заказу</th><th data-key="order_by">Заказать до</th>
+          <th class="n" data-key="stock_now">Остаток</th><th class="n" data-key="in_transit_qty">В пути</th><th data-key="stockout_date">Хватит до</th>
+          <th class="n" data-key="cover_days">Дней</th><th class="n" data-key="lead_days">Плечо</th>
+          <th class="n" data-key="sales_12m" title="Продано штук за 12 мес">Продажи 12м</th><th class="n" data-key="orders_12m" title="Число заказов покупателей за 12 мес">Заказов</th>
+          <th class="n" data-key="rank_in_category" title="Ранг по продажам внутри категории">Ранг</th><th class="n" data-key="trend" title="Продажи 12 мес к предыдущим 12">Тренд</th>
+          <th class="n" data-key="markup_12m">Наценка</th><th data-key="risk">Риски и флаги</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ============================== РИСКИ ============================== #}
+<section class="panel" id="panel-risks" data-panel="risks" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>Риски</h1>
+      <p class="lead">Где не хватит товара, где его слишком много и какие поставки под вопросом.</p>
+    </div>
+  </div>
+  <div class="chips nav-chips">
+    <a class="chip" href="#risks-deficit">Дефицит неизбежен <b>{{ deficit|length }}</b></a>
+    <a class="chip" href="#risks-late">Дефицит, если опоздать <b>{{ if_late|length }}</b></a>
+    <a class="chip" href="#risks-excess">Излишки <b>{{ excess|length }}</b></a>
+    <a class="chip" href="#risks-po">Опаздывающие заказы <b>{{ late_arrivals|length }}</b></a>
+    <a class="chip" href="#risks-stale">Уточнить у поставщика <b>{{ stale|length }}</b></a>
+    <a class="chip" href="#risks-suppliers">Недовоз поставщиков <b>{{ low_rel|length }}</b></a>
+  </div>
+
+  <div class="card" id="risks-deficit">
+    <div class="card-head"><h2>Дефицит неизбежен — {{ deficit|length }} SKU</h2></div>
+    <p class="hint">Товар кончится раньше, чем придёт заказ, размещённый сегодня (дата анализа + плечо). Обычной закупкой разрыв не закрыть: <b>местный поставщик или ускоренная доставка</b> для позиций класса A, для остальных — принять разрыв. Продажи в дни без товара потеряны и не дозаказываются.</p>
+    <div class="tbl-wrap scroll-y">
+    <table class="tbl sortable">
+      <thead><tr><th>SKU</th><th>Категория</th><th>Поставщик</th><th>ABC</th><th class="n" data-type="num">Остаток</th><th class="n" data-type="num">В пути</th><th data-type="date">Хватит до</th><th data-type="date">Приход заказа</th><th class="n" data-type="num">Дней без товара</th><th class="n" data-type="num">Потеряно, шт.</th><th class="n" data-type="num">К заказу</th><th>Статус</th></tr></thead>
+      <tbody>
+      {% for r in deficit %}
+        <tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td>{{ sup(r) }}</td><td>{{ r.abc }}</td>
+        <td class="n" data-v="{{ r.stock_now }}">{{ r.stock_now|int }}</td><td class="n" data-v="{{ r.in_transit_qty }}">{{ r.in_transit_qty|int }}</td>
+        <td data-v="{{ r.stockout_date or '9999' }}">{{ r.stockout_date|date }}</td><td data-v="{{ r.explain.arrival }}">{{ r.explain.arrival|date }}</td>
+        <td class="n txt-red" data-v="{{ r.explain.days_short }}">{{ r.explain.days_short|int }}</td><td class="n" data-v="{{ r.explain.lost_lead }}">{{ r.explain.lost_lead|int }}</td>
+        <td class="n strong" data-v="{{ r.order_qty }}">{{ r.order_qty|int }}</td><td>{{ status_badge(r.status) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="grid g-2">
+    <div class="card" id="risks-late">
+      <div class="card-head"><h2>Дефицит, если опоздать с заказом — {{ if_late|length }}</h2></div>
+      <p class="hint">Пока успеваем: заказ, размещённый до указанной даты, придёт до обнуления. Опоздание с размещением — дефицит.</p>
+      <table class="tbl sortable compact">
+        <thead><tr><th>SKU</th><th>Категория</th><th data-type="date">Заказать до</th><th data-type="date">Хватит до</th><th class="n" data-type="num">К заказу</th><th>Статус</th></tr></thead>
+        <tbody>
+        {% for r in if_late %}<tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td data-v="{{ r.order_by }}" class="strong">{{ r.order_by|date }}</td><td data-v="{{ r.stockout_date or '9999' }}">{{ r.stockout_date|date }}</td><td class="n" data-v="{{ r.order_qty }}">{{ r.order_qty|int }}</td><td>{{ status_badge(r.status) }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card" id="risks-excess">
+      <div class="card-head"><h2>Излишки — {{ excess|length }}</h2></div>
+      <p class="hint">Остаток и товар в пути покрывают больше {{ cfg.excess_cover_months }} мес. прогноза. Не заказывать; по возможности — акции или перераспределение.</p>
+      <div class="tbl-wrap scroll-y short">
+      <table class="tbl sortable compact">
+        <thead><tr><th>SKU</th><th>Категория</th><th class="n" data-type="num">Остаток</th><th class="n" data-type="num">В пути</th><th class="n" data-type="num">Прогноз 12 мес</th><th class="n" data-type="num">Лишних, шт.</th></tr></thead>
+        <tbody>
+        {% for r in excess %}<tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td class="n" data-v="{{ r.stock_now }}">{{ r.stock_now|int }}</td><td class="n" data-v="{{ r.in_transit_qty }}">{{ r.in_transit_qty|int }}</td><td class="n" data-v="{{ r.forecast_12m }}">{{ r.forecast_12m|int }}</td><td class="n strong txt-violet" data-v="{{ r.explain.excess_qty }}">{{ r.explain.excess_qty|int }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g-3">
+    <div class="card" id="risks-po">
+      <div class="card-head"><h2>Опаздывающие заказы — {{ late_arrivals|length }}</h2></div>
+      <p class="hint">Плановая дата прошла, просрочка ≤ {{ cfg.overdue_grace_days }} дн.: считаем «в пути» с приходом через {{ cfg.overdue_eta_days }} дн. после даты анализа.</p>
+      <table class="tbl compact sortable">
+        <thead><tr><th>Заказ</th><th>SKU</th><th>Поставщик</th><th data-type="date">Плановая дата</th><th data-type="date">Ждём</th><th class="n" data-type="num">Шт.</th></tr></thead>
+        <tbody>
+        {% for a in late_arrivals %}<tr data-sku="{{ a.sku_id }}"><td>{{ a.po_id or "—" }}</td>{{ skucell(a.sku_id) }}<td>{{ a.supplier_id }}</td><td data-v="{{ a.promised_date }}">{{ a.promised_date|date }}</td><td data-v="{{ a.eta }}">{{ a.eta|date }}</td><td class="n" data-v="{{ a.qty }}">{{ a.qty|int }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card" id="risks-stale">
+      <div class="card-head"><h2>Уточнить у поставщика — {{ stale|length }}</h2></div>
+      <p class="hint">Просрочка больше {{ cfg.overdue_grace_days }} дн. — в расчёте не учитываются как «в пути». Уточнить, придёт ли товар.</p>
+      <table class="tbl compact sortable">
+        <thead><tr><th>Заказ</th><th>SKU</th><th>Поставщик</th><th data-type="date">Плановая дата</th><th class="n" data-type="num">Не пришло, шт.</th><th class="n" data-type="num">Просрочка, дн.</th></tr></thead>
+        <tbody>
+        {% for s in stale %}<tr data-sku="{{ s.sku_id }}"><td>{{ s.po_id or "—" }}</td>{{ skucell(s.sku_id) }}<td>{{ s.supplier_id }}</td><td data-v="{{ s.promised_date }}">{{ s.promised_date|date }}</td><td class="n" data-v="{{ s.qty_pending }}">{{ s.qty_pending|int }}</td><td class="n txt-red" data-v="{{ s.days_overdue }}">{{ s.days_overdue|int }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card" id="risks-suppliers">
+      <div class="card-head"><h2>Недовоз поставщиков — {{ low_rel|length }}</h2></div>
+      <p class="hint">Доля исполнения = получено / заказано по заказам старше {{ cfg.reliability_min_age_days }} дн. Ниже {{ cfg.reliability_min_ratio|pct }} — заказ увеличен, но не больше ×{{ cfg.reliability_max_uplift|num(1) }}.</p>
+      <table class="tbl compact sortable">
+        <thead><tr><th>Поставщик</th><th class="n" data-type="num">Заказов</th><th class="n" data-type="num">Заказано</th><th class="n" data-type="num">Получено</th><th class="n" data-type="num">Исполнение</th><th class="n" data-type="num">Поправка</th></tr></thead>
+        <tbody>
+        {% for s in low_rel %}<tr><td>{{ s.supplier_id }}</td><td class="n" data-v="{{ s.orders_n }}">{{ s.orders_n|int }}</td><td class="n" data-v="{{ s.qty_ordered }}">{{ s.qty_ordered|int }}</td><td class="n" data-v="{{ s.qty_received }}">{{ s.qty_received|int }}</td><td class="n txt-amber" data-v="{{ s.fill_ratio }}">{{ s.fill_ratio|pct }}</td><td class="n" data-v="{{ s.uplift }}">×{{ s.uplift|num(2) }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ============================== НА ПЕРЕСМОТР ЦЕНЫ ============================== #}
+<section class="panel" id="panel-review" data-panel="review" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>На пересмотр цены</h1>
+      <p class="lead">Эти позиции продаются, но в заказ не идут: наценка за 12 мес ниже {{ cfg.min_markup_pct }}% или себестоимость в ERP не проставлена. Решение — поднять цену, сменить поставщика или вывести из ассортимента. «Скоро кончится» — если ничего не делать, товар закончится.</p>
+    </div>
+  </div>
+  <div class="stats wide">
+    <div class="stat"><b>{{ review|length }}</b><span>всего на пересмотр</span></div>
+    <div class="stat"><b>{{ review_low|length }}</b><span>наценка ниже {{ cfg.min_markup_pct }}%</span></div>
+    <div class="stat"><b>{{ review_no_cost|length }}</b><span>нет себестоимости — продажи есть, наценка не посчитана</span></div>
+    <div class="stat stat-red"><b>{{ review_running_out|length }}</b><span>из них скоро кончится</span></div>
+  </div>
+  <div class="card flush">
+    <div class="tbl-wrap scroll-y tall">
+    <table class="tbl sortable">
+      <thead><tr><th>SKU</th><th>Категория</th><th>Поставщик</th><th>ABC</th><th class="n" data-type="num">Наценка 12 мес</th><th>Причина</th><th class="n" data-type="num">Продажи 12 мес</th><th class="n" data-type="num">Остаток</th><th data-type="date">Хватит до</th><th class="n" data-type="num">Расчёт заказа дал бы, шт.</th><th>Флаги</th></tr></thead>
+      <tbody>
+      {% for r in review %}
+        <tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td>{{ sup(r) }}</td><td>{{ r.abc }}</td>
+        <td class="n {{ 'txt-red' if r.markup_12m is not none and r.markup_12m < 0 }}" data-v="{{ r.markup_12m if r.markup_12m is not none else -999 }}">{% if r.markup_12m is not none %}{{ r.markup_12m|num(0) }}%{% else %}<span class="muted">нет данных</span>{% endif %}</td>
+        <td class="small">{{ r.explain.excluded or "" }}</td>
+        <td class="n" data-v="{{ r.sales_12m }}">{{ r.sales_12m|int }}</td><td class="n" data-v="{{ r.stock_now }}">{{ r.stock_now|int }}</td>
+        <td data-v="{{ r.stockout_date or '9999' }}">{{ r.stockout_date|date }}</td><td class="n" data-v="{{ r.explain.would_order or 0 }}">{{ (r.explain.would_order or 0)|int }}</td>
+        <td>{{ flag_badges(r.flags, ("скоро кончится", "нет себестоимости", "низкая наценка")) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
+{# ============================== МЁРТВЫЙ АССОРТИМЕНТ ============================== #}
+<section class="panel" id="panel-dead" data-panel="dead" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>Мёртвый ассортимент</h1>
+      <p class="lead">Нет продаж {{ cfg.dead_months }} мес. В заказ не идут. С остатком на складе — распродать (уценка, комплекты, возврат поставщику), без остатка — закрыть карточку в ERP.</p>
+    </div>
+  </div>
+  <div class="stats wide">
+    <div class="stat"><b>{{ kpi.dead|int }}</b><span>SKU без продаж {{ cfg.dead_months }} мес</span></div>
+    <div class="stat stat-orange"><b>{{ dead_sell|length }}</b><span>распродать — {{ dead_sell|sum(attribute="stock_now")|int }} шт. на складе</span></div>
+    <div class="stat"><b>{{ dead_close|length }}</b><span>закрыть карточку — остатка нет</span></div>
+  </div>
+  <div class="grid g-dead">
+    <div class="card">
+      <div class="card-head"><h2>{{ status_badge("dead_sell") }} Распродать — {{ dead_sell|length }}</h2></div>
+      <div class="tbl-wrap scroll-y tall">
+      <table class="tbl sortable compact">
+        <thead><tr><th>SKU</th><th>Категория</th><th>Поставщик</th><th class="n" data-type="num">Остаток, шт.</th><th class="n" data-type="num">В пути</th><th class="n" data-type="num">История, мес</th></tr></thead>
+        <tbody>
+        {% for r in dead_sell %}<tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td>{{ sup(r) }}</td><td class="n strong" data-v="{{ r.stock_now }}">{{ r.stock_now|int }}</td><td class="n" data-v="{{ r.in_transit_qty }}">{{ r.in_transit_qty|int }}</td><td class="n" data-v="{{ r.history_months }}">{{ r.history_months|int }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>{{ status_badge("dead_close") }} Закрыть карточку — {{ dead_close|length }}</h2></div>
+      <div class="tbl-wrap scroll-y tall">
+      <table class="tbl sortable compact">
+        <thead><tr><th>SKU</th><th>Категория</th><th>Поставщик</th><th>Тип поставки</th><th class="n" data-type="num">История, мес</th></tr></thead>
+        <tbody>
+        {% for r in dead_close %}<tr data-sku="{{ r.sku_id }}">{{ skucell(r.sku_id) }}<td>{{ r.category|cat }}</td><td>{{ sup(r) }}</td><td class="muted">{{ {"import": "импорт", "local": "местный", "unknown": "нет приходов"}.get(r.supply_type, r.supply_type) }}</td><td class="n" data-v="{{ r.history_months }}">{{ r.history_months|int }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+{# ============================== ТОЧНОСТЬ ПРОГНОЗА ============================== #}
+<section class="panel" id="panel-accuracy" data-panel="accuracy" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>Точность прогноза</h1>
+      <p class="lead">Бэктест: модель обучена только на данных до {{ accuracy.cut|date }} и прогнозирует следующие {{ accuracy.months }} мес., которые затем сравниваются с фактом. Ориентир — наивный прогноз «среднее за последние 12 мес». WAPE — суммарная абсолютная ошибка по месяцам / факт (меньше — лучше); смещение — (прогноз − факт) / факт.</p>
+    </div>
+  </div>
+  <div class="stats wide">
+    <div class="stat"><b>{{ accuracy.total.wape_model|pct }}</b><span>WAPE модели, все категории</span></div>
+    <div class="stat"><b>{{ accuracy.total.wape_naive|pct }}</b><span>WAPE наивного прогноза</span></div>
+    <div class="stat"><b>{{ accuracy.total.bias_model|pct(1, True) }}</b><span>смещение модели</span></div>
+    <div class="stat"><b>{{ accuracy.wins|length }} из {{ accuracy.rows|length }}</b><span>категорий, где модель точнее</span></div>
+  </div>
+  <div class="grid g-acc">
+    <div class="card">
+      <div class="card-head"><h2>WAPE и смещение по категориям</h2></div>
+      <table class="tbl sortable">
+        <thead><tr><th>Категория</th><th class="n" data-type="num">Факт, шт.</th><th class="n" data-type="num">WAPE модели</th><th class="n" data-type="num">WAPE наивного</th><th class="n" data-type="num">Смещение модели</th><th class="n" data-type="num">Смещение наивного</th><th>Точнее</th></tr></thead>
+        <tbody>
+        {% for r in accuracy.rows %}
+          <tr><td>{{ r.label }}</td><td class="n" data-v="{{ r.actual }}">{{ r.actual|int }}</td>
+          <td class="n {{ 'strong txt-green' if r.better }}" data-v="{{ r.wape_model }}">{{ r.wape_model|pct }}</td>
+          <td class="n {{ 'strong' if not r.better }}" data-v="{{ r.wape_naive }}">{{ r.wape_naive|pct }}</td>
+          <td class="n" data-v="{{ r.bias_model }}">{{ r.bias_model|pct(0, True) }}</td><td class="n" data-v="{{ r.bias_naive }}">{{ r.bias_naive|pct(0, True) }}</td>
+          <td>{% if r.better %}<span class="badge st-ok">модель</span>{% else %}<span class="badge st-dead_close">наивный</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td>Итого</td><td class="n">{{ accuracy.total.actual|int }}</td><td class="n strong">{{ accuracy.total.wape_model|pct }}</td><td class="n">{{ accuracy.total.wape_naive|pct }}</td><td class="n">{{ accuracy.total.bias_model|pct(0, True) }}</td><td class="n">{{ accuracy.total.bias_naive|pct(0, True) }}</td><td></td></tr></tfoot>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Как читать</h2></div>
+      <div class="prose">
+        <p>Модель заметно точнее наивного прогноза там, где спрос сезонный: <b>{{ accuracy.wins|join(", ") }}</b>. Среднее за год «размазывает» пик по всем месяцам и промахивается и в сезон, и вне его.</p>
+        {% if accuracy.losses %}<p>Где наивный прогноз не хуже или точнее: <b>{{ accuracy.losses|join(", ") }}</b>. У ровного спроса (смесители) сезонность почти не даёт выигрыша, а у категорий с разовыми крупными отгрузками и сменой ассортимента в прошлом модель переоценивает уровень. Цифры показаны как есть, без подгонки.</p>{% endif %}
+        <p>Для закупки важнее не ошибка отдельного месяца, а сумма на горизонте «плечо + покрытие» — её закрывает страховой запас.</p>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Факт, модель и наивный прогноз по месяцам</h2><span class="muted small">{{ accuracy.cut|date }} + {{ accuracy.months }} мес., штук в месяц по категории</span></div>
+    <div class="acc-charts">
+      {% for r in accuracy.rows %}<div class="acc-chart"><div class="acc-title">{{ r.label }} <span class="muted">WAPE {{ r.wape_model|pct }} / {{ r.wape_naive|pct }}</span></div><div class="chart" data-acc="{{ r.category }}" style="height:220px"></div></div>{% endfor %}
+    </div>
+  </div>
+</section>
+
+{# ============================== МЕТОДИКА ============================== #}
+<section class="panel" id="panel-method" data-panel="method" hidden>
+  <div class="panel-head">
+    <div>
+      <h1>Методика и параметры</h1>
+      <p class="lead">Числа считает детерминированный Python по выгрузке ERP; ИИ только пишет пояснения к уже посчитанным числам и количества не меняет. Все параметры — в <code>config.toml</code>, меняются без правки кода.</p>
+    </div>
+  </div>
+  <div class="grid g-method">
+    <div class="card">
+      <div class="card-head"><h2>Как считается заказ</h2></div>
+      <ol class="steps">
+        <li><b>Спрос = продано.</b> Возвраты (около 2% объёма) показываются в карточке, но не вычитаются: возврат не отменяет того, что покупатель пришёл за товаром и товар должен был быть на полке. Неполный последний месяц (по {{ cfg.partial_day }}-е число) в средние и профили не идёт.</li>
+        <li><b>Сезонность категории.</b> 12 коэффициентов по суммарному ряду категории (среднее = 1), разовые всплески обрезаются (больше ×{{ cfg.season_outlier_factor|num(1) }} от медианы по годам). У SKU с историей ≥ {{ cfg.shrink_min_months }} мес. профиль — смесь своего и категорийного ({{ (cfg.season_own_weight * 100)|round|int }}/{{ (100 - cfg.season_own_weight * 100)|round|int }}).</li>
+        <li><b>Уровень и тренд.</b> Уровень — десезонализированное среднее за 12 полных месяцев; тренд — продажи последних 12 мес. к предыдущим 12, в пределах {{ cfg.trend_clip[0]|num(1) }}–{{ cfg.trend_clip[1]|num(1) }}. Новинки (&lt; {{ cfg.new_sku_months }} мес.) — по имеющимся месяцам и профилю категории, флаг «мало истории».</li>
+        <li><b>Упущенный спрос (цензура).</b> Месяц с нулевым остатком на начало и нулевыми продажами — это «не было товара», а не «нет спроса»: из оценки уровня он исключается. Снимки остатков есть только с 01.2024, раньше нули не исключаются.</li>
+        <li><b>Потолок прогноза (D03).</b> Прогноз на год не выше {{ cfg.forecast_cap_vs_last_year|num(0) }}× продаж последних 12 мес. (при истории ≥ 12 мес.) — защита от перезаказа по оценке упущенного спроса; срезанные — с флагом «упущенный спрос — проверить» ({{ limits.capped }} SKU).</li>
+        <li><b>Плечо L.</b> Медиана плановых сроков заказов SKU, иначе — медиана поставщика, иначе {{ cfg.lead_default_days }} дн.; в пределах {{ cfg.lead_min_days }}–{{ cfg.lead_max_days }} дн. Без истории приходов (<code>unknown</code>) плечо помечено «оценочное».</li>
+        <li><b>Покрытие R</b> = {{ cfg.default_cover_days }} дн. (в ERP <code>target_cover_days</code> = 0 у всех SKU); план пересматривается раз в {{ cfg.review_period_days }} дн.</li>
+        <li><b>Страховой запас</b> = z × σ × √((L + R) / 30), σ — устойчивый разброс месячных продаж (1,25 × MAD), не больше {{ cfg.safety_cap_months }} мес. прогнозного спроса. Уровень сервиса по ABC: {% for k, v in cfg.service_level.items() %}{{ k }} — {{ v|pct }}{% if not loop.last %}, {% endif %}{% endfor %}.</li>
+        <li><b>Потерянный спрос до прихода (D06).</b> Если товар кончится раньше, чем придёт заказ, продажи в эти дни потеряны и не дозаказываются: остаток к приходу = max(0; остаток + в пути до прихода − прогноз до прихода).</li>
+        <li><b>Потребность</b> = прогноз на окне покрытия (от прихода заказа ещё R дн.) + страховой − остаток к приходу − в пути с приходом в это окно.</li>
+        <li><b>Надёжность поставщика (D01).</b> Доля исполнения = получено / заказано по заказам старше {{ cfg.reliability_min_age_days }} дн.; «получено» — по фактическим приходам в окне до плановой даты + {{ cfg.reliability_receipt_window_days }} дн. Ниже {{ cfg.reliability_min_ratio|pct }} — потребность делится на долю, но не больше ×{{ cfg.reliability_max_uplift|num(1) }}.</li>
+        <li><b>Партия (D05).</b> Кратность — медиана приходов SKU, округлённая до шага; если партия больше половины годового прогноза, округляем только до шага. Заказ не больше прогноза на {{ cfg.excess_cover_months }} мес.</li>
+        <li><b>Когда заказывать.</b> «Заказать до» = день, когда проекция остатка опустится до страхового запаса, минус плечо. Если эта дата раньше следующего пересмотра — «Заказать сейчас», иначе — «Заказать позже» с датой.</li>
+        <li><b>Что не заказываем.</b> Наценка за 12 мес. ниже {{ cfg.min_markup_pct }}% или нет себестоимости (D02) — «На пересмотр цены»; нет продаж {{ cfg.dead_months }} мес. — мёртвый ассортимент: с остатком «Распродать», без — «Закрыть карточку».</li>
+        <li><b>Риски.</b> «Дефицит неизбежен» — товар кончится до прихода заказа, размещённого сегодня; «если опоздать» — успеваем, только если разместить вовремя; «излишек» — запас больше {{ cfg.excess_cover_months }} мес.; заказы с просрочкой ≤ {{ cfg.overdue_grace_days }} дн. ждём через {{ cfg.overdue_eta_days }} дн., больше — «уточнить у поставщика».</li>
+      </ol>
+    </div>
+    <div>
+      <div class="card">
+        <div class="card-head"><h2>Ограничения данных</h2></div>
+        <ul class="limits">
+          <li><b>Вес заведён у {{ limits.weight_known }} SKU из {{ skus_total }}</b> — вес заказа показан как «≥ X кг, без учёта N поз.»; объёма нет вовсе, расчёт контейнеров невозможен.</li>
+          <li><b>Денег в данных нет</b> — только наценка в % к закупочной цене (без логистики и растаможки) и дециль цены. Заказ — в штуках, без бюджета.</li>
+          <li><b>Остатки — только с 01.2024</b> (снимок на 1-е число). Упущенный спрос до 2024 года не распознаётся; остаток на дату анализа = снимок на 1-е + приходы − продажи с 1-го.</li>
+          <li><b>Сверка остатков не сходится у части SKU:</b> снимок + приходы − продажи не всегда равен следующему снимку (движения, которых нет в выгрузке, — списания, перемещения, инвентаризация). Поэтому остаток берётся от последнего снимка, а не накапливается.</li>
+          <li><b>{{ limits.unknown_supply }} SKU без истории приходов</b> — продавались с остатков; плечо у них по поставщику или {{ cfg.lead_default_days }} дн., пометка «оценочное» (всего {{ limits.lead_estimated }} SKU).</li>
+          <li><b>Поставщик не заведён у {{ limits.no_supplier }} SKU</b> — их заказы собраны в группу «поставщик не заведён».</li>
+          <li><b>Продажи — суммарно по всем каналам</b> (опт, розница, маркетплейс); разложить по каналам нельзя.</li>
+          <li><b>«В пути» в прошлом прогоне ({{ history[0].as_of|date if history else "—" }})</b> — приближение по той же выгрузке: заказы с плановой датой после даты прогона считаются ещё не пришедшими.</li>
+          <li><b>{{ limits.no_stock_year }} SKU весь год без остатка</b> — у них прогноз опирается на более раннюю историю и профиль категории.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Обозначения</h2></div>
+        <div class="legend">
+          {% for k in ("order_now", "order_later", "ok", "review_price", "dead_sell", "dead_close") %}{{ status_badge(k) }}{% endfor %}
+        </div>
+        <div class="legend">{% for k in RISK %}<span class="badge rk-{{ k }}">{{ RISK[k] }}</span>{% endfor %}</div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Параметры расчёта — config.toml</h2><span class="muted small">{{ params|length }} параметров, значения этого прогона</span></div>
+    <table class="tbl params">
+      <thead><tr><th>Группа</th><th>Параметр</th><th>Значение</th><th>Что значит</th></tr></thead>
+      <tbody>
+      {% for p in params %}<tr><td class="muted">{% if loop.first or loop.previtem.group != p.group %}{{ p.group }}{% endif %}</td><td><code>{{ p.key }}</code></td><td class="strong">{{ p.value }}</td><td>{{ p.doc }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+</main>
+
+<footer class="wrap footer">
+  Данные на {{ as_of|date }} · пересчитано {{ generated_at|datetime }} · выгрузка ERP, данные обезличены · <a href="data/plan.json">plan.json</a> · <a href="data/backtest.json">backtest.json</a> · <a href="data/diff.json">diff.json</a>
+</footer>
+
+<div class="modal" id="sku-modal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="sku-title">
+    <button class="modal-close" type="button" data-close="1" aria-label="Закрыть">×</button>
+    <div id="sku-body"></div>
+  </div>
+</div>
+
+<script src="assets/echarts.min.js"></script>
+<script src="data/data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
