@@ -1,0 +1,133 @@
+from datetime import date
+
+import pandas as pd
+import pytest
+
+from procurement.config import Config, load_config
+from procurement.data import DataError, cut_dataset, detect_as_of, load_dataset
+
+# --- config -----------------------------------------------------------------
+
+def test_load_config_reads_file_and_defaults_missing_keys(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('min_markup_pct = 30\ntrend_clip = [0.7, 1.3]\nas_of = "2026-07-01"\n'
+                 '[service_level]\nA = 0.99\nB = 0.9\nC = 0.8\n', encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.min_markup_pct == 30
+    assert cfg.trend_clip == (0.7, 1.3)
+    assert cfg.as_of == date(2026, 7, 1)
+    assert cfg.service_level["A"] == 0.99
+    assert cfg.lead_default_days == 123  # ключа нет в файле → значение по умолчанию
+    assert cfg.abc_thresholds == (0.80, 0.95)
+
+
+def test_project_config_toml_has_every_config_field():
+    import dataclasses
+    import tomllib
+    from pathlib import Path
+
+    raw = tomllib.loads((Path(__file__).parent.parent / "config.toml").read_text(encoding="utf-8"))
+    names = {f.name for f in dataclasses.fields(Config)}
+    assert names - set(raw) <= {"as_of"}  # as_of по умолчанию не задан (= авто)
+    cfg = load_config(Path(__file__).parent.parent / "config.toml")
+    assert cfg.lead_max_days == 180 and cfg.partial_day == 13 and cfg.as_of is None
+
+
+# --- load_dataset -----------------------------------------------------------
+
+def test_load_real_dataset_all_tables(real_ds):
+    assert len(real_ds.sku) == 791
+    assert len(real_ds.sales) == 37414
+    assert len(real_ds.stock) == 9627
+    assert len(real_ds.po) == 660
+    assert len(real_ds.receipts) == 2394
+    assert len(real_ds.suppliers) == 39
+    assert isinstance(real_ds.sales["month"].iloc[0], pd.Period)
+    assert isinstance(real_ds.po["order_date"].iloc[0], date)
+    assert isinstance(real_ds.receipts["receipt_date"].iloc[0], date)
+
+
+def test_missing_file_is_reported_in_russian(make_dataset):
+    d = make_dataset.write(sales=make_dataset.series("SKU-1", "2024-01", [1, 2]),
+                           drop={"receipts.csv": None})
+    with pytest.raises(DataError, match="receipts.csv"):
+        load_dataset(d)
+
+
+def test_missing_column_names_file_and_column(make_dataset):
+    d = make_dataset.write(sales=make_dataset.series("SKU-1", "2024-01", [1, 2]),
+                           drop={"sales_monthly.csv": ["qty_sold"]})
+    with pytest.raises(DataError) as e:
+        load_dataset(d)
+    assert "sales_monthly.csv" in str(e.value) and "qty_sold" in str(e.value)
+    assert "нет колонки" in str(e.value)
+
+
+def test_broken_date_names_file_column_and_value(make_dataset):
+    d = make_dataset.write(
+        sales=make_dataset.series("SKU-1", "2024-01", [1, 2]),
+        receipts=[{"sku_id": "SKU-1", "receipt_date": "2024-13-45", "qty": 5}],
+    )
+    with pytest.raises(DataError) as e:
+        load_dataset(d)
+    msg = str(e.value)
+    assert "receipts.csv" in msg and "receipt_date" in msg and "2024-13-45" in msg
+
+
+def test_broken_month_is_reported(make_dataset):
+    rows = make_dataset.series("SKU-1", "2024-01", [1, 2])
+    rows[1]["month"] = "февраль"
+    with pytest.raises(DataError, match="month"):
+        load_dataset(make_dataset.write(sales=rows))
+
+
+# --- detect_as_of -----------------------------------------------------------
+
+def test_detect_as_of_real_data_is_13_aug_2026(real_ds):
+    assert detect_as_of(real_ds, Config()) == date(2026, 8, 13)
+
+
+def test_detect_as_of_full_last_month_gives_first_of_next(make_dataset):
+    ds = make_dataset(sales=make_dataset.series("SKU-1", "2024-01", [1, 2, 3]))
+    assert detect_as_of(ds, Config()) == date(2024, 4, 1)
+
+
+def test_detect_as_of_partial_uses_partial_day_and_override(make_dataset):
+    ds = make_dataset(sales=make_dataset.series("SKU-1", "2024-01", [1, 2, 3], partial_last=True))
+    assert detect_as_of(ds, Config(partial_day=20)) == date(2024, 3, 20)
+    assert detect_as_of(ds, Config(as_of=date(2024, 2, 1))) == date(2024, 2, 1)
+
+
+# --- cut_dataset ------------------------------------------------------------
+
+def test_cut_dataset_real_2026_07_01_is_consistent(real_ds):
+    cut_on = date(2026, 7, 1)
+    c = cut_dataset(real_ds, cut_on)
+    assert c.sales["month"].max() == pd.Period("2026-06", "M")
+    assert (c.sales["partial_month"] == 0).all()
+    assert c.stock["month"].max() == pd.Period("2026-07", "M")
+    assert (c.receipts["receipt_date"] < cut_on).all()
+    assert (c.po["order_date"] < cut_on).all()
+    fut = c.po[c.po["promised_date"] >= cut_on]
+    assert (fut["status"] == "open").all() and (fut["qty_received"] == 0).all()
+    # «в пути» на дату обрезки — всё, что ещё не пришло по плану
+    src = real_ds.po[(real_ds.po["order_date"] < cut_on) & (real_ds.po["promised_date"] >= cut_on)]
+    assert fut["qty_pending"].sum() == (src["qty_pending"] + src["qty_received"]).sum()
+    # справочник пересчитан на дату: мёртвые = без продаж за 12 мес
+    assert c.sku["last_sale_month"].dropna().max() <= pd.Period("2026-06", "M")
+    assert (c.sku["on_order_qty"] >= 0).all()
+    # исходный набор не изменён
+    assert real_ds.sales["month"].max() == pd.Period("2026-08", "M")
+    assert detect_as_of(c, Config()) == cut_on
+
+
+def test_cut_dataset_recomputes_markup_like_erp(make_dataset):
+    sales = make_dataset.series("SKU-1", "2024-01", [10] * 12 + [0] * 6)  # 2024-01..2025-06
+    for r, m in zip(sales, [10] * 6 + [40] * 6 + [None] * 6):
+        r["markup_pct"] = m
+    ds = make_dataset(sales=sales)
+    assert cut_dataset(ds, date(2025, 1, 1)).sku["avg_markup_pct_12m"].iloc[0] == pytest.approx(25)
+    # 2025-07: окно 2024-07..2025-06 → продажи только с наценкой 40
+    assert cut_dataset(ds, date(2025, 7, 1)).sku["avg_markup_pct_12m"].iloc[0] == pytest.approx(40)
+    # 2026-02: за 12 мес продаж нет → наценка пустая (мёртвый)
+    assert pd.isna(cut_dataset(ds, date(2026, 2, 1)).sku["avg_markup_pct_12m"].iloc[0])
