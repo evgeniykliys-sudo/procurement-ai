@@ -302,6 +302,16 @@ def test_stock_on_snapshot_minus_sales_plus_receipts(make_dataset):
     assert s["S3"] == 0  # не ниже нуля
 
 
+def test_stock_on_without_snapshot_of_month_rolls_last_one_forward(make_dataset):
+    # выгрузка кончается полным декабрём, снимка на 1 января ещё нет: 100 на 01.12 − 10 продаж + 5 прихода
+    sales = make_dataset.series("S", "2023-11", [20, 10]) + make_dataset.series("T", "2023-11", [0, 0])
+    stock = [{"sku_id": "S", "month": "2023-11", "stock_qty": 500},
+             {"sku_id": "S", "month": "2023-12", "stock_qty": 100}]  # у T строки на 12 нет = 0
+    receipts = [{"sku_id": "S", "receipt_date": "2023-12-20", "qty": 5}]
+    s = stock_on(make_dataset(sales=sales, stock=stock, receipts=receipts), date(2024, 1, 1))
+    assert s["S"] == 100 - 10 + 5 and s["T"] == 0
+
+
 def test_stock_on_real_data_covers_all_skus(real_ds):
     s = stock_on(real_ds, AS_OF)
     assert len(s) == 791 and (s >= 0).all()
@@ -351,7 +361,10 @@ def test_year_forecast_not_above_twice_last_12m_sales_on_real_data(real_ds, as_o
     res = build_demand(ds, Config(), as_of)
     ps = res.per_sku.set_index("sku_id")
     p0 = pd.Period(as_of, "M")
-    fc = res.forecast[(res.forecast["period"] >= p0) & (res.forecast["period"] < p0 + 12)]
+    # 12 мес от даты анализа, как «прогноз на 12 мес» плана: при дате не 1-го — и начало 13-го месяца
+    fc = res.forecast[(res.forecast["period"] >= p0) & (res.forecast["period"] <= p0 + 12)].copy()
+    tail = (as_of.day - 1) / (p0 + 12).days_in_month
+    fc["qty"] *= np.where(fc["period"] == p0 + 12, tail, 1.0)
     fc12 = fc.groupby("sku_id")["qty"].sum().reindex(ps.index)
     old = ps["history_months"] >= 12
     over = fc12[old] - 2 * ps.loc[old, "sales_12m"]

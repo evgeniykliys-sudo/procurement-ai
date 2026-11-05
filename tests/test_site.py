@@ -44,16 +44,31 @@ def test_summary_kpi_and_dates(run):
     html, k = run["html"], run["plan"]["kpi"]
     assert "Данные на 13.08.2026" in html
     assert "пересчитано" in html
-    # 7 KPI с разделителями тысяч: 188 поз. / 34 379 шт. / 18 поставщиков / 206 / 82 / 115 / 331
+    # 7 KPI с разделителями тысяч: 195 поз. / 34 945 шт. / 18 поставщиков / 206 / 82 / 115 / 331
     # (до правок D07–D11 было 42 796 шт.: страховой без сезона, партия до медианы прихода, недовоз
-    # по несопоставленным заказам)
-    assert k["order_now_qty"] == 34379
+    # по несопоставленным заказам; до D14 — 188 / 34 379: заказ до пересмотра при 0 шт. на сегодня терялся)
+    assert k["order_now_qty"] == 34945
     tiles = re.findall(r'class="kpi-value">([^<]+)<', html)
-    assert tiles[:7] == ["188", f"34{NBSP}379", "18", "206", "82", "115", "331"]
+    assert tiles[:7] == ["195", f"34{NBSP}945", "18", "206", "82", "115", "331"]
     assert "127 уже на нуле" in html  # из 206 «дефицит неизбежен» остатка нет уже сейчас
     assert "Календарь заказов" in html and "Что изменилось" in html
     assert "Растут" in html and "Падают" in html
     assert "01.07.2026" in html  # сравнение с прошлым прогоном
+
+
+def test_site_dir_with_foreign_files_is_refused_and_untouched(tmp_path):
+    # `--site .` из корня проекта: сборщик пересоздаёт data/ — data/raw с выгрузкой не должна пропасть
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
+    (raw / "sku_dim.csv").write_text("sku_id\n", encoding="utf-8")
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="не похожа на собранный сайт"):
+        build_site({}, {}, {}, {}, [], out_dir=tmp_path)
+    assert (raw / "sku_dim.csv").exists()
+    only_raw = tmp_path / "x"
+    (only_raw / "data" / "raw").mkdir(parents=True)
+    with pytest.raises(ValueError, match="data/raw"):
+        build_site({}, {}, {}, {}, [], out_dir=only_raw)
 
 
 def test_note_unavailable_shows_reason(run):
@@ -66,11 +81,11 @@ def test_orders_exports_match_plan(run):
     wb = load_workbook(exp / "orders_all.xlsx")
     ws = wb.worksheets[0]
     rows = [r for r in ws.iter_rows(min_row=2, values_only=True) if r[1] and str(r[1]).startswith("SKU-")]
-    assert len(rows) == len(orders) == 188
-    assert sum(r[4] for r in rows) == 34379
+    assert len(rows) == len(orders) == 195
+    assert sum(r[4] for r in rows) == 34945
     with open(exp / "orders_all.csv", encoding="utf-8-sig", newline="") as f:
         csv_rows = [r for r in csv.reader(f, delimiter=";") if r and r[1].startswith("SKU-")]
-    assert len(csv_rows) == 188
+    assert len(csv_rows) == 195
     for sup in {o["supplier_id"] for o in orders}:
         name = "orders_no_supplier.xlsx" if sup == "—" else f"orders_{sup}.xlsx"
         assert (exp / name).exists(), name

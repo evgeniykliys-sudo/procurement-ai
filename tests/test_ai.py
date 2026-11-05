@@ -208,6 +208,7 @@ def test_answer_is_cached_by_input_hash(calls, tmp_path, monkeypatch):
     (FakeResponse({"error": {"message": "Authentication Fails"}}, status=401), ["401"]),
     (_llm("это не JSON"), ["JSON"]),
     (_llm(json.dumps({"sku_notes": {}})), ["записк"]),
+    (_llm([{"type": "text", "text": "{}"}]), ["формате"]),  # content — список частей: не падать на .strip()
 ])
 def test_failures_return_reason_in_russian_and_never_the_key(calls, tmp_path, monkeypatch, capsys, caplog,
                                                             response, words):

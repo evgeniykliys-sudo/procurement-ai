@@ -34,7 +34,8 @@ ABC_ORDER = {"A": 0, "B": 1, "C": 2}
 ITEM_KEYS = ("sku_id", "category", "supplier_id", "abc", "status", "order_qty", "order_by",
              "stockout_date", "cover_days", "stock_now", "in_transit_qty", "next_eta", "lead_days",
              "markup_12m", "sales_12m", "forecast_12m", "risk", "flags")
-EXPLAIN_KEYS = ("forecast_horizon", "safety", "stock_at_arrival", "transit", "gross", "uplift", "lot",
+EXPLAIN_KEYS = ("forecast_horizon", "safety", "stock_at_arrival", "transit", "gross_window", "bridge",
+                "gross", "uplift", "lot",
                 "lot_source", "cap", "merged_until_review", "final", "stock", "transit_lead", "forecast_lead",
                 "arrival", "at", "days_short", "lost_lead", "excess_qty")
 ORDER_KEYS = ("sku_id", "category", "supplier_id", "abc", "order_qty", "order_by", "stockout_date",
@@ -225,6 +226,8 @@ def analyst_note(summary: dict, cfg, cache_dir) -> dict:
     try:
         content = resp.json()["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError):
+        return _fail("ответ DeepSeek не в ожидаемом формате", model)
+    if content is not None and not isinstance(content, str):  # список частей и т. п. — не наш формат
         return _fail("ответ DeepSeek не в ожидаемом формате", model)
     data = _parse(content or "")
     if data is None:

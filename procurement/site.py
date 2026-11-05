@@ -515,10 +515,34 @@ def _env() -> Environment:
     return env
 
 
+SITE_ENTRIES = {"index.html", "data", "exports", "assets"}
+
+
+def _check_site_dir(out: Path) -> None:
+    """Папка сайта своя: нет — создадим; иначе в ней только имена сборщика, а в `data` — без
+    подпапок (`data/raw` — исходная выгрузка, её не трогаем). Чужая папка — ValueError, ничего не удалено."""
+    if not out.exists():
+        return
+    if not out.is_dir():
+        raise ValueError(f"папка сайта {out.as_posix()} — это файл")
+    foreign = sorted(p.name for p in out.iterdir() if p.name not in SITE_ENTRIES and not p.name.startswith("."))
+    data = out / "data"
+    if data.is_dir():
+        foreign += [f"data/{p.name}" for p in data.iterdir() if p.is_dir()]
+    if foreign:
+        raise ValueError(f"папка сайта {out.as_posix()} не похожа на собранный сайт (есть "
+                         f"{', '.join(foreign[:5])}) — укажите отдельную папку, например --site site")
+
+
 def build_site(plan_json: dict, diff: dict, backtest: dict, note: dict, history_index: list,
                out_dir="site") -> Path:
-    """Собирает сайт в `out_dir`; возвращает путь к `index.html`."""
+    """Собирает сайт в `out_dir`; возвращает путь к `index.html`.
+
+    Папки `data`, `exports`, `assets` пересоздаются, поэтому `out_dir` должна быть новой, пустой или
+    прежней папкой сайта (только наши имена, в `data` — только файлы): `--site .` из корня проекта
+    иначе снёс бы `data/raw` с выгрузкой ERP."""
     out = Path(out_dir)
+    _check_site_dir(out)
     for sub in ("data", "exports", "assets"):
         if (out / sub).exists():
             shutil.rmtree(out / sub)

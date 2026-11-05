@@ -19,9 +19,11 @@
 - проекция остатка по дням (прогноз месяца — равномерно по его дням; приходы в пути — в дату
   прихода) даёт «хватит до» (день, когда потеряно ≥ `stockout_min_lost_qty` шт. спроса; дефицит
   неизбежен — если столько теряется до as_of + L) и «заказать до»: дата, когда остаток опустится ниже страхового
-  (и приход уже размещённых заказов в пределах R его не поднимет), − L;
+  (и приход уже размещённых заказов в пределах R его не поднимет или до этого прихода товар
+  кончится, D14 — тогда заказ не меньше разрыва до прихода, `bridge`), − L;
 - «заказать до» ≤ дата + `review_period_days` → заказать сейчас (до следующего пересмотра
-  не дожить), иначе — позже: количество оценивается тем же расчётом на дату заказа;
+  не дожить; заказ на сегодня 0 шт. — в него входит заказ следующей даты до пересмотра, D15),
+  иначе — позже: количество оценивается тем же расчётом на дату заказа;
 - мёртвые (нет продаж `dead_months` мес) и наценка ниже порога или не проставлена — не в заказ.
 
 Одна физическая проекция остатка (`physical`, D12: продажи при нуле потеряны) — для «хватит до»,
@@ -249,11 +251,19 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
     cal_days = (pd.Period(month0 + CALENDAR_MONTHS, "M").start_time.date() - as_of).days  # окно календаря
 
     def next_cross(i: int, proj: np.ndarray, start: int) -> int | None:
-        """Первый день t ≥ start, когда проекция ниже страхового и не поднимается до t + R."""
+        """Первый день t ≥ start, когда проекция ниже страхового и либо не поднимается до t + R,
+        либо до прихода, который её поднимет, теряется ≥ `stockout_min_lost_qty` шт. спроса (D14:
+        партия в пути, пришедшая после дефицита, не отменяет заказ, который его предотвращает).
+        Пустой склад при спросе дня — ниже страхового и при страховом 0 (`safety_cap_months = 0`)."""
         R = int(cover_target[i])
         below = proj < safety_t[i] - EPS
+        below[:D] |= (proj[:D] <= EPS) & (daily[i] > EPS)
         for t in np.flatnonzero(below[start:D_fc]) + start:
-            if below[t:min(t + R, D) + 1].all():
+            w = below[t:min(t + R, D) + 1]
+            if w.all():
+                return int(t)
+            u = t + int(np.argmin(w))  # первый день выше страхового — его поднял приход
+            if np.maximum(daily[i, t:u] - proj[t:u], 0.0).sum() >= lost_min - EPS:
                 return int(t)
         return None
 
@@ -275,7 +285,16 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         f_h = _r1(cum_dem[i, end] - cum_dem[i, a])
         tr = int(round(carr[end] - carr[a]))
         saf = _r1(safety_t[i, a])
-        gross = round(f_h + saf - at_arrival - tr, 1)
+        gross_window = round(f_h + saf - at_arrival - tr, 1)
+        # разрыв до партии в пути (D14): если она приходит в окне покрытия уже после того, как товар
+        # кончится, заказ не меньше спроса до неё — max по дням τ ∈ (a; a+R] спроса [a; τ) − остаток
+        # к приходу − приходов (a; τ); без такой партии он меньше `gross_window` (нет страхового)
+        bridge = 0.0
+        if end > a:
+            k = np.arange(a + 1, end + 1)
+            short = (cum_dem[i, k] - cum_dem[i, a]) - (carr[k - 1] - carr[a]) - at_arrival
+            bridge = max(0.0, _r1(short.max()))
+        gross = bridge if bridge > max(gross_window, 0.0) else gross_window
         qty = gross * uplift[i]
         by_lot = bool(use_lot[i]) and _round_lot(qty, int(lots[i])) - qty <= lot_slack[i] + EPS
         lot = int(lots[i]) if by_lot else _step_for(qty, cfg.lot_rounding)
@@ -289,7 +308,7 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
                 "safety_lead": _r1(s_lead[i, a]), "safety_cap": _r1(safety_cap[i, a]),
                 "typical_lot": int(lots[i]), "stock_at_arrival": at_arrival,
                 "lost_to_arrival": lost_to_arrival, "transit": tr,
-                "gross": gross, "uplift": float(round(uplift[i], 4)), "lot": lot, "final": final,
+                "gross_window": gross_window, "bridge": bridge, "gross": gross, "uplift": float(round(uplift[i], 4)), "lot": lot, "final": final,
                 "lot_source": lot_source, "cap": cap,
                 "stock": st, "transit_lead": t_lead, "forecast_lead": f_lead,
                 "at": (as_of + timedelta(days=d)).isoformat(), "arrival": (as_of + timedelta(days=a)).isoformat(),
@@ -387,24 +406,50 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         elif cross_t is None:
             status = "ok"
         else:
+            # первый заказ — на дату пересечения (до пересмотра — сегодня); сегодня вышел 0 шт.
+            # (покрытие R короче пересмотра: остаток к приходу ещё выше страхового) — следующая дата
+            # пересечения, если она до пересмотра: к следующему пересмотру её уже пропустили бы
             ob_t = cross_t - L
-            order_by = as_of + timedelta(days=ob_t)
-            if ob_t <= cfg.review_period_days:
-                status = "order_now"
-            else:
-                status = "order_later"
-                explain = need_at(i, ob_t, proj)
-                explain["excluded"] = None
-            if explain["final"] <= 0:  # потребность меньше минимального заказа — не заказываем (F3)
-                status, order_by = "ok", None
+            d0 = 0 if ob_t <= cfg.review_period_days else ob_t
+            first = need_at(i, d0, proj)
+            d1, q1 = d0, int(first["final"])
+            while q1 <= 0 and d0 == 0:
+                t = next_cross(i, proj, d1 + L + 1)
+                if t is None or t - L > cfg.review_period_days:
+                    break
+                d1 = t - L
+                q1 = int(need_at(i, d1, proj)["final"])
+            if q1 <= 0:  # потребность меньше минимального заказа — не заказываем (F3)
+                status, explain = "ok", first
                 explain["excluded"] = (f"потребность {explain['gross']:g} шт. меньше минимального "
                                        f"заказа {cfg.min_order_qty:g} шт.")
+            elif d1 <= cfg.review_period_days:
+                # «заказать сейчас»: и тогда, когда заказ на сегодня 0 шт., а нужный заказ — раньше
+                # следующего пересмотра (D11: до него не дожить); количество — объединение ниже
+                status, explain = "order_now", need_at(i, 0, proj)
+                order_by = as_of + timedelta(days=ob_t if first["final"] > 0 else d1)
+                seq = orders_from(i, 0, int(explain["final"]), proj)
+                if not any(d <= cfg.review_period_days for d, _ in seq):  # пересмотр длиннее календаря
+                    seq = [(d1, q1)] + seq
+            else:
+                status, order_by = "order_later", as_of + timedelta(days=d1)
+                explain = need_at(i, d1, proj)
+                seq = orders_from(i, d1, q1, proj)
+            explain["excluded"] = explain.get("excluded")
         if status in ("order_now", "order_later"):
             order_qty = int(explain["final"])
         else:
             explain["would_order"] = int(explain["final"])
             explain["final"] = 0
             order_qty = 0
+        # «Заказать сейчас» покрывает всё до следующего пересмотра: заказы календаря с датой не позже
+        # `review_period_days` (сезон набирает ход, а каждый заказ покрывает R дн.; или R короче
+        # пересмотра) — в этот же заказ (D11)
+        if status == "order_now":
+            total = sum(q for d, q in seq if d <= cfg.review_period_days)
+            if total > order_qty:
+                explain["merged_until_review"] = int(total - order_qty)
+                explain["final"] = order_qty = int(total)
         if order_qty > 0 and uplift[i] > 1.0 + EPS:
             risk.append("low_reliability")
         if order_qty > 0 and lots[i] > fc_year[i]:  # для сведения: типичный приход больше года спроса
@@ -415,19 +460,11 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
 
         # календарь (B2): первый заказ, затем повторные — тот же расчёт на следующую дату, когда
         # остаток с учётом уже запланированных приходов опустится до страхового, пока дата в окне;
-        # повторный на эту дату вышел 0 шт. (меньше минимального заказа) — следующая дата пересечения.
-        # «Заказать сейчас» покрывает всё до следующего пересмотра: повторный заказ с датой не позже
-        # `review_period_days` (сезон набирает ход, а каждый заказ покрывает R дн.) — в этот же заказ (D11)
+        # повторный на эту дату вышел 0 шт. (меньше минимального заказа) — следующая дата пересечения;
+        # у «заказать сейчас» — от объединённого заказа сегодня
         if order_qty > 0:
-            d0 = 0 if status == "order_now" else (order_by - as_of).days
-            seq = orders_from(i, d0, order_qty, proj)
             if status == "order_now":
-                extra = sum(q for d, q in seq[1:] if d <= cfg.review_period_days)
-                if extra > 0:
-                    order_qty += extra
-                    explain["merged_until_review"] = int(extra)
-                    explain["final"] = order_qty
-                    seq = orders_from(i, 0, order_qty, proj)
+                seq = orders_from(i, 0, order_qty, proj)
             for d, q in seq:
                 schedule.append((str(pd.Period(as_of + timedelta(days=d), "M")), q, sid, d))
 
@@ -476,8 +513,10 @@ def _sku_series(ds: Dataset, sid, month0, fc_row, phys_row, m_days) -> dict:
 
 
 def _supplier_orders(items: pd.DataFrame, as_of: date) -> pd.DataFrame:
-    """Позиции «заказать сейчас» по поставщикам: дата размещения — «заказать до», но не раньше
-    сегодняшней; ожидаемый приход — плюс плечо; вес строки — вес единицы × кол-во (None — не заведён)."""
+    """Позиции «заказать сейчас» по поставщикам: «разместить до» — «заказать до», но не раньше
+    сегодняшней; ожидаемый приход — заказа, размещённого сегодня (дата анализа + плечо): на него
+    посчитано количество, и ту же дату показывает карточка SKU; вес строки — вес единицы × кол-во
+    (None — не заведён)."""
     now = items[(items["status"] == "order_now") & (items["order_qty"] > 0)]
     cols = ["supplier_id", "supplier_label", "sku_id", "order_qty", "weight_kg", "order_by",
             "expected_arrival"]
@@ -489,7 +528,7 @@ def _supplier_orders(items: pd.DataFrame, as_of: date) -> pd.DataFrame:
         sup = r.supplier_id if known else NO_SUPPLIER
         rows.append([sup, sup if known else NO_SUPPLIER_LABEL, r.sku_id, int(r.order_qty),
                      None if w is None else float(round(w * r.order_qty, 2)),
-                     place, place + timedelta(days=int(r.lead_days))])
+                     place, as_of + timedelta(days=int(r.lead_days))])
     df = pd.DataFrame(rows, columns=cols)
     if not df.empty:
         df = df.sort_values(["supplier_id", "order_by", "sku_id"], na_position="last", kind="stable")

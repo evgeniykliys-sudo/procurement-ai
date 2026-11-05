@@ -72,15 +72,21 @@ def stock_on(ds: Dataset, as_of: date) -> pd.Series:
 
     Нет строки снимка = 0 (в выгрузке нет нулевых строк). Продажи неполного месяца вычитаются
     целиком (это и есть продажи до даты выгрузки), полного — пропорционально прошедшим дням.
+    Снимка за месяц даты анализа в выгрузке нет совсем (выгрузка кончается полным месяцем, снимок
+    на 1-е следующего ещё не сделан) — берётся последний более ранний снимок, из него вычитаются
+    продажи прошедших месяцев целиком и прибавляются приходы с его 1-го числа.
     Результат не ниже 0; индекс — все SKU справочника.
     """
     month = _month_period(as_of)
-    start = date(as_of.year, as_of.month, 1)
     ids = ds.sku["sku_id"]
-    snap = ds.stock[ds.stock["month"] == month].groupby("sku_id")["stock_qty"].sum()
-    sm = ds.sales[ds.sales["month"] == month]
+    earlier = ds.stock.loc[ds.stock["month"] <= month, "month"]
+    base = earlier.max() if not earlier.empty else month
+    start = date(base.year, base.month, 1)
+    snap = ds.stock[ds.stock["month"] == base].groupby("sku_id")["stock_qty"].sum()
+    sm = ds.sales[(ds.sales["month"] >= base) & (ds.sales["month"] <= month)]
     elapsed = (as_of.day - 1) / calendar.monthrange(as_of.year, as_of.month)[1]
-    sold = (sm["qty_sold"] * np.where(sm["partial_month"] == 1, 1.0, elapsed)).groupby(sm["sku_id"]).sum()
+    share = np.where((sm["month"] < month) | (sm["partial_month"] == 1), 1.0, elapsed)
+    sold = (sm["qty_sold"] * share).groupby(sm["sku_id"]).sum()
     rc = ds.receipts
     rc = rc[(rc["receipt_date"] >= start) & (rc["receipt_date"] < as_of)]
     got = rc.groupby("sku_id")["qty"].sum()
@@ -294,8 +300,11 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
         # весь ряд прогноза масштабируется пропорционально, сезонная форма та же
         sales_12m = int(np.nansum(q[i, win]))
         if history_months >= LEVEL_WINDOW:
-            year_share = sum(idx[(month0 + k).month - 1] * (first_share if k == 0 else 1.0)
-                             for k in range(LEVEL_WINDOW))
+            # 12 мес от даты анализа, как «прогноз на 12 мес» в плане: остаток текущего месяца,
+            # 11 следующих и начало 13-го до того же числа (при дате не 1-го числа)
+            year_share = sum(idx[(month0 + k).month - 1]
+                             * (first_share if k == 0 else 1.0 - first_share if k == LEVEL_WINDOW else 1.0)
+                             for k in range(LEVEL_WINDOW + 1))
             year = base * trend * year_share
             cap = cfg.forecast_cap_vs_last_year * sales_12m
             if year > cap:

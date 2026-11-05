@@ -293,11 +293,14 @@
         ? "остаток " + n0(e.stock) + " + в пути до прихода " + n0(e.transit_lead) + " − продажи до прихода " + n1(e.forecast_lead - e.lost_to_arrival) + " (прогноз " + n1(e.forecast_lead) + ", из них " + n1(e.lost_to_arrival) + " потеряно, пока товара не было: партия в пути на них не уходит)"
         : "max(0; остаток " + n0(e.stock) + " + в пути до прихода " + n0(e.transit_lead) + " − прогноз до прихода " + n1(e.forecast_lead) + ")"), n1(e.stock_at_arrival)),
       exRow("−", "В пути с приходом в окно покрытия", "", n0(e.transit)),
-      exRow("=", "Потребность", "", n1(e.gross), "sub")
+      e.bridge > Math.max(e.gross_window || 0, 0) + 0.05
+        // партия в пути придёт уже после того, как товар кончится: заказ закрывает разрыв до неё (D14)
+        ? exRow("=", "Потребность", "по окну покрытия " + n1(e.gross_window) + ", но товар кончится раньше, чем придёт партия в пути, — заказ закрывает спрос до её прихода", n1(e.gross), "sub")
+        : exRow("=", "Потребность", "", n1(e.gross), "sub")
     ];
     if (e.uplift && e.uplift !== 1) rows.push(exRow("×", "Поправка на недовоз поставщика", "доля исполнения ниже " + Math.round((cfg.reliability_min_ratio || 0.95) * 100) + "%", "×" + n1(e.uplift)));
     rows.push(exRow("⌈⌉", "Округление", esc(lotText), ""));
-    if (e.merged_until_review) rows.push(exRow("+", "Следующий заказ до пересмотра", "по расчёту он понадобился бы раньше, чем через " + n0(cfg.review_period_days || 30) + " дн. (спрос растёт к сезону) — заказываем сразу", n0(e.merged_until_review)));
+    if (e.merged_until_review) rows.push(exRow("+", "Следующий заказ до пересмотра", "по расчёту он понадобился бы раньше следующего пересмотра через " + n0(cfg.review_period_days || 30) + " дн. — до него не дожить, заказываем сразу", n0(e.merged_until_review)));
     rows.push(exRow("=", e.excluded ? "К заказу (исключено)" : "К заказу", e.excluded ? esc(e.excluded) : (r.status === "order_later" ? "оценка на " + fdate(e.at) : ""), n0(e.final) + " шт.", "total"));
     var extra = "";
     if (e.lost_lead > 0) extra += '<div class="callout red">До прихода заказа товара не будет ≈ ' + n0(e.days_short) + " дн., потеряно ≈ " + n0(e.lost_lead) + " шт. Эти продажи не дозаказываются — заказ закрывает только окно после прихода. Чтобы не терять продажи: местный поставщик или ускоренная доставка.</div>";

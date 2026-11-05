@@ -465,3 +465,51 @@ def test_lost_demand_before_transit_is_not_paid_from_it(make_dataset):
     assert e["stock_at_arrival"] == pytest.approx(
         e["stock"] + e["transit_lead"] - e["forecast_lead"] + e["lost_to_arrival"], abs=0.2)
     assert e["gross"] == pytest.approx(e["forecast_horizon"] + e["safety"] - e["stock_at_arrival"] - e["transit"], abs=0.11)
+
+
+def test_transit_after_stockout_does_not_cancel_preventable_order(make_dataset):
+    """D14: 400 шт. при 100/мес кончатся 01.05, партия в пути придёт 30.05, заказ сегодня — 31.03.
+    Поздняя партия не отменяет заказ, закрывающий разрыв: он не меньше спроса до её прихода."""
+    ds = build(make_dataset, sku("LATE", stock=400, lead=90, transit=[("2024-05-30", 1500)]))
+    plan = plan_of(ds)
+    r = row(plan, "LATE")
+    e = r["explain"]
+    assert r["stockout_date"] == date(2024, 5, 1)
+    assert r["status"] == "order_now" and r["order_qty"] > 0 and "LATE" in set(plan.supplier_orders["sku_id"])
+    assert e["bridge"] > max(e["gross_window"], 0) and e["gross"] == e["bridge"]
+    # к приходу ≈ 100 шт., спрос до 30.05 ≈ 197 шт. — разрыв ≈ 97 шт.
+    assert 85 <= e["bridge"] <= 105 and r["order_qty"] >= e["bridge"]
+    # партия приходит до того, как товар кончится, — заказывать сейчас не нужно (правило окна R прежнее)
+    early = row(plan_of(build(make_dataset, sku("EARLY", stock=400, lead=90, transit=[("2024-04-20", 1500)]))), "EARLY")
+    assert early["status"] != "order_now"
+
+
+def test_order_needed_before_next_review_is_not_lost_with_short_cover(make_dataset):
+    """Покрытие 7 дн. короче пересмотра 30 дн.: заказ на сегодня 0 шт., но нужный заказ — 18.01.
+    К следующему пересмотру его уже пропустили бы: заказать сейчас, а не «заказ не нужен»."""
+    ds = build(make_dataset, sku("SHORT", stock=380, lead=90))
+    later = row(plan_of(ds, Config(default_cover_days=7, review_period_days=0)), "SHORT")
+    assert later["status"] == "order_later" and later["order_qty"] > 0
+    plan = plan_of(ds, Config(default_cover_days=7))
+    r = row(plan, "SHORT")
+    assert r["status"] == "order_now" and r["order_qty"] >= later["order_qty"]
+    assert r["order_by"] == later["order_by"]
+    assert r["explain"]["merged_until_review"] == r["order_qty"] and r["explain"]["final"] == r["order_qty"]
+    assert plan.calendar.iloc[0]["qty"] == r["order_qty"]
+
+
+def test_zero_safety_cap_still_orders_for_empty_stock(make_dataset):
+    """safety_cap_months = 0 (страховой выключен): пустой склад при спросе — точка заказа."""
+    r = row(plan_of(build(make_dataset, sku("ZERO", stock=0, lead=90)), Config(safety_cap_months=0)), "ZERO")
+    assert "deficit_unavoidable" in r["risk"]
+    assert r["status"] == "order_now" and r["order_qty"] > 0 and r["explain"]["safety"] == 0
+
+
+def test_supplier_order_arrival_matches_card(make_dataset):
+    """«Заказать сейчас» с датой «заказать до» в будущем: приход в выгрузке — как в карточке
+    (заказ сегодня + плечо), на него и посчитано количество."""
+    plan = plan_of(build(make_dataset, sku("R", stock=450, lead=90)), Config(review_period_days=45))
+    r, o = row(plan, "R"), plan.supplier_orders.set_index("sku_id").loc["R"]
+    assert r["status"] == "order_now" and r["order_by"] > AS_OF
+    assert o["order_by"] == r["order_by"]
+    assert o["expected_arrival"].isoformat() == r["explain"]["arrival"] == (AS_OF + timedelta(days=90)).isoformat()

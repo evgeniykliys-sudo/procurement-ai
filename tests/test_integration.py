@@ -86,10 +86,13 @@ def test_calendar_supplier_labels_and_slow_orders(real_run):
     assert all(r["supplier_id"] is not None for r in so)
     assert sum(r["supplier_id"] == "—" for r in so) == k["order_now_no_supplier"]
     assert all(r["supplier_label"] == "поставщик не заведён" for r in so if r["supplier_id"] == "—")
-    # медленные позиции: меньше 1 шт. не заказываем, заказ не больше годового прогноза
+    # медленные позиции: меньше 1 шт. не заказываем (сегодняшняя потребность < 1 — заказ только из
+    # объединённого до пересмотра, D11), заказ не больше годового прогноза
     for r in plan["items"]:
         if r["status"] == "order_now":
-            assert r["explain"]["gross"] >= 1 and r["order_qty"] <= max(1, r["forecast_12m"]) + 0.1, r["sku_id"]
+            e = r["explain"]
+            assert e["gross"] >= 1 or e.get("merged_until_review"), r["sku_id"]
+            assert r["order_qty"] <= max(1, r["forecast_12m"]) + 0.1, r["sku_id"]
 
 
 def test_history_is_compact_and_reproducible(real_run):
