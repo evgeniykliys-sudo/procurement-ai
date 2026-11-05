@@ -9,6 +9,5 @@ __pycache__/
 out/
 site/
 .cache/
-video/out/
-video/audio/
-video/frames/
+# сборка ролика — локально, в репозиторий не входит
+video/
