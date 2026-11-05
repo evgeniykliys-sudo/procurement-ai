@@ -62,12 +62,13 @@ def test_site_dir_with_foreign_files_is_refused_and_untouched(tmp_path):
     raw.mkdir(parents=True)
     (raw / "sku_dim.csv").write_text("sku_id\n", encoding="utf-8")
     (tmp_path / "config.toml").write_text("", encoding="utf-8")
-    with pytest.raises(ValueError, match="не похожа на собранный сайт"):
+    with pytest.raises(ValueError, match="не из прошлой сборки"):
         build_site({}, {}, {}, {}, [], out_dir=tmp_path)
     assert (raw / "sku_dim.csv").exists()
     only_raw = tmp_path / "x"
     (only_raw / "data" / "raw").mkdir(parents=True)
-    with pytest.raises(ValueError, match="data/raw"):
+    (only_raw / "data" / "raw" / "x.csv").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="data/raw/x.csv"):
         build_site({}, {}, {}, {}, [], out_dir=only_raw)
 
 
@@ -158,3 +159,46 @@ def test_accuracy_category_without_sales_does_not_break_site(run, tmp_path):
     index = build_site(run["plan"], run["diff"], bt, {"ok": False, "error": "нет"}, [], out_dir=tmp_path / "s")
     html = index.read_text(encoding="utf-8")
     assert "empty_cat" in html and "нет продаж" in html
+
+
+def test_site_dir_keeps_foreign_files_even_with_site_names(tmp_path):
+    """Папка с index.html, data, assets, exports, но файлы не из прошлой сборки — отказ, ничего не
+    удалено."""
+    site = tmp_path / "site"
+    for rel in ("index.html", "data/sku_dim.csv", "assets/company-logo.svg", "exports/signed-order.xlsx"):
+        (site / rel).parent.mkdir(parents=True, exist_ok=True)
+        (site / rel).write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="не из прошлой сборки"):
+        build_site({}, {}, {}, {}, [], out_dir=site)
+    for rel in ("index.html", "data/sku_dim.csv", "assets/company-logo.svg", "exports/signed-order.xlsx"):
+        assert (site / rel).read_text(encoding="utf-8") == "x", rel
+
+
+def test_failed_site_check_writes_nothing(tmp_path):
+    """Недопустимая папка сайта — отказ до записи истории и out/: план и дашборд не расходятся."""
+    bad = tmp_path / "site"
+    bad.mkdir()
+    (bad / "notes.txt").write_text("x", encoding="utf-8")
+    rc = main(["run", "--no-ai", "--raw", str(REAL_RAW), "--history", str(tmp_path / "history"),
+               "--out", str(tmp_path / "out"), "--site", str(bad)])
+    assert rc == 2
+    assert not (tmp_path / "out").exists() and not (tmp_path / "history").exists()
+
+
+def test_site_rebuild_removes_only_own_files(run, tmp_path):
+    """Своя прошлая сборка (манифест) пересобирается: удаляется только записанное ею."""
+    import shutil
+    site = tmp_path / "site"
+    shutil.copytree(run["site"], site)
+    (site / "exports" / "orders_OLD-SUP.xlsx").write_bytes(b"")  # выгрузка прошлой сборки
+    manifest = site / ".procurement-site.json"
+    names = json.loads(manifest.read_text(encoding="utf-8")) + ["exports/orders_OLD-SUP.xlsx"]
+    manifest.write_text(json.dumps(names), encoding="utf-8")
+    note = {"ok": False, "markdown": "", "sku_notes": {}, "error": "нет", "model": ""}
+    build_site(run["plan"], run["diff"], run["backtest"], note, [], out_dir=site)
+    assert not (site / "exports" / "orders_OLD-SUP.xlsx").exists() and (site / "index.html").exists()
+    (site / "data" / "raw").mkdir()
+    (site / "data" / "raw" / "sku_dim.csv").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="data/raw/sku_dim.csv"):
+        build_site(run["plan"], run["diff"], run["backtest"], note, [], out_dir=site)
+    assert (site / "data" / "raw" / "sku_dim.csv").exists() and (site / "index.html").exists()

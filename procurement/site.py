@@ -515,38 +515,47 @@ def _env() -> Environment:
     return env
 
 
-SITE_ENTRIES = {"index.html", "data", "exports", "assets"}
+SITE_MANIFEST = ".procurement-site.json"  # список файлов, записанных прошлой сборкой
 
 
-def _check_site_dir(out: Path) -> None:
-    """Папка сайта своя: нет — создадим; иначе в ней только имена сборщика, а в `data` — без
-    подпапок (`data/raw` — исходная выгрузка, её не трогаем). Чужая папка — ValueError, ничего не удалено."""
+def _files_under(out: Path) -> set[str]:
+    return {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file() and p.name != SITE_MANIFEST}
+
+
+def check_site_dir(out: Path) -> list[str]:
+    """Файлы прошлой сборки в `out`, которые можно удалить. Папки нет или она пуста — []. Любой файл,
+    которого нет в манифесте прошлой сборки (`data/raw/*.csv`, свой логотип в assets, подписанный
+    заказ в exports), — ValueError до любой записи и удаления: сборщик удаляет только своё."""
     if not out.exists():
-        return
+        return []
     if not out.is_dir():
         raise ValueError(f"папка сайта {out.as_posix()} — это файл")
-    foreign = sorted(p.name for p in out.iterdir() if p.name not in SITE_ENTRIES and not p.name.startswith("."))
-    data = out / "data"
-    if data.is_dir():
-        foreign += [f"data/{p.name}" for p in data.iterdir() if p.is_dir()]
+    files = _files_under(out)
+    manifest = out / SITE_MANIFEST
+    try:
+        known = set(json.loads(manifest.read_text(encoding="utf-8"))) if manifest.exists() else set()
+    except ValueError:
+        known = set()
+    foreign = sorted(files - known)
     if foreign:
-        raise ValueError(f"папка сайта {out.as_posix()} не похожа на собранный сайт (есть "
-                         f"{', '.join(foreign[:5])}) — укажите отдельную папку, например --site site")
+        raise ValueError(f"в папке сайта {out.as_posix()} есть файлы не из прошлой сборки "
+                         f"({', '.join(foreign[:5])}{' …' if len(foreign) > 5 else ''}) — сборщик их не "
+                         "удаляет; укажите новую или пустую папку, например --site site")
+    return sorted(files & known)
 
 
 def build_site(plan_json: dict, diff: dict, backtest: dict, note: dict, history_index: list,
                out_dir="site") -> Path:
     """Собирает сайт в `out_dir`; возвращает путь к `index.html`.
 
-    Папки `data`, `exports`, `assets` пересоздаются, поэтому `out_dir` должна быть новой, пустой или
-    прежней папкой сайта (только наши имена, в `data` — только файлы): `--site .` из корня проекта
-    иначе снёс бы `data/raw` с выгрузкой ERP."""
+    `out_dir` — новая, пустая или папка прошлой сборки: удаляются только файлы из её манифеста
+    (`.procurement-site.json`), чужой файл — отказ без изменений (`--site .` из корня проекта иначе
+    снёс бы `data/raw` с выгрузкой ERP)."""
     out = Path(out_dir)
-    _check_site_dir(out)
+    for rel in check_site_dir(out):
+        (out / rel).unlink()
     for sub in ("data", "exports", "assets"):
-        if (out / sub).exists():
-            shutil.rmtree(out / sub)
-        (out / sub).mkdir(parents=True)
+        (out / sub).mkdir(parents=True, exist_ok=True)
     for name, data in (("plan", plan_json), ("diff", diff), ("backtest", backtest), ("note", note),
                        ("history", history_index)):
         (out / "data" / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -560,4 +569,6 @@ def build_site(plan_json: dict, diff: dict, backtest: dict, note: dict, history_
     html = _env().get_template("index.html.j2").render(**_view(plan_json, diff, backtest, note, history_index))
     index = out / "index.html"
     index.write_text(html, encoding="utf-8")
+    (out / SITE_MANIFEST).write_text(json.dumps(sorted(_files_under(out)), ensure_ascii=False, indent=0),
+                                     encoding="utf-8")
     return index

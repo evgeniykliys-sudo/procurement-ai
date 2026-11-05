@@ -43,6 +43,8 @@ def compute_plan(raw, cfg, as_of: date | None = None) -> tuple[dict, object, obj
 
 def cmd_run(args) -> int:
     t0 = time.time()
+    # папка сайта — до любой записи: иначе отказ сборщика оставил бы новые out/ и историю при старом сайте
+    site.check_site_dir(Path(args.site))
     cfg = load_config(args.config)
     as_of = date.fromisoformat(args.as_of) if args.as_of else None
     plan_json, ds_full, cfg = compute_plan(args.raw, cfg, as_of)

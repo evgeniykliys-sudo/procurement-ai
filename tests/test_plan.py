@@ -363,15 +363,16 @@ def test_lot_over_half_year_forecast_uses_rounding_step(make_dataset):
 
 
 def test_slow_sku_order_not_inflated_by_rounding_step(make_dataset):
-    # ONE — 1 шт. в год: потребность на 150 дн. < 1 шт. → не заказываем (а не 0.4 → 10);
+    # ONE — 1 шт. в год: потребность на 150 дн. < 1 шт. → сегодня не заказываем (а не 0.4 → 10);
     # FIVE — 5 шт. в год: потребность ≈ 3 шт., шаг округления дал бы 10 → заказ не больше годового прогноза
     one = [0] * 11 + [1]
     five = [1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1]  # продажи в т.ч. в апреле–мае (горизонт)
     ds = build(make_dataset, sku("ONE", qtys=one * 3, stock=0), sku("FIVE", qtys=five * 3, stock=0))
     plan = plan_of(ds)
     o = row(plan, "ONE")
-    assert o["explain"]["gross"] < 1 and o["order_qty"] == 0
-    assert o["status"] not in ("order_now", "order_later") and "ONE" not in set(plan.supplier_orders["sku_id"])
+    # сегодня не заказываем; заказ «позже» 1 шт. к сезону — см. test_later_order_after_first_below_min_is_kept
+    assert o["status"] != "order_now" and "ONE" not in set(plan.supplier_orders["sku_id"])
+    assert o["order_qty"] <= max(1, o["forecast_12m"]) + 0.1
     f = row(plan, "FIVE")
     assert f["status"] == "order_now" and f["forecast_12m"] == pytest.approx(5, abs=0.5)
     assert f["explain"]["gross"] <= f["order_qty"] <= max(1, f["forecast_12m"])
@@ -513,3 +514,40 @@ def test_supplier_order_arrival_matches_card(make_dataset):
     assert r["status"] == "order_now" and r["order_by"] > AS_OF
     assert o["order_by"] == r["order_by"]
     assert o["expected_arrival"].isoformat() == r["explain"]["arrival"] == (AS_OF + timedelta(days=90)).isoformat()
+
+
+def test_later_order_after_first_below_min_is_kept(make_dataset):
+    """Первая потребность < 1 шт. (минимальный заказ), но на более позднюю дату расчёт даёт заказ —
+    он остаётся в плане и календаре «заказать позже», как повторные заказы (а не «заказ не нужен»)."""
+    one = [0] * 11 + [1]
+    ds = build(make_dataset, sku("ONE", qtys=one * 3, stock=0))
+    plan = plan_of(ds)
+    r = row(plan, "ONE")
+    assert r["status"] == "order_later" and r["order_qty"] >= 1 and r["explain"]["gross"] >= 1
+    assert r["order_qty"] <= max(1, r["forecast_12m"]) + 0.1
+    month = str(r["order_by"])[:7]
+    cal = plan.calendar.set_index("month")
+    if month in cal.index:
+        assert cal.loc[month, "qty"] >= r["order_qty"]
+
+
+def test_merged_order_not_above_cap(make_dataset):
+    """Покрытие 7 дн., потолок — 1 мес. спроса: заказы до пересмотра объединяются, но вместе не
+    больше потолка (было: потолок 100 шт., после объединения — 204+)."""
+    ds = build(make_dataset, sku("CAP", stock=0, lead=90))
+    plan = plan_of(ds, Config(default_cover_days=7, excess_cover_months=1))
+    r = row(plan, "CAP")
+    e = r["explain"]
+    assert r["status"] == "order_now" and 0 < r["order_qty"] <= e["cap"] <= 110
+    # остаток потребности до пересмотра сверх потолка — следующим заказом календаря в том же месяце
+    assert e.get("merged_capped") and plan.calendar.iloc[0]["qty"] > r["order_qty"]
+
+
+def test_zero_safety_catches_shortage_within_a_day(make_dataset):
+    """Страховой 0: утром 30.04 ≈ 1.3 шт. при спросе ≈ 3.3 шт./дн., партия — утром 01.05. Нехватка
+    внутри дня — точка заказа: заказ сегодня пришёл бы 31.03 и её закрыл."""
+    ds = build(make_dataset, sku("DAY", stock=398, lead=90, transit=[("2024-05-01", 1000)]))
+    r = row(plan_of(ds, Config(safety_cap_months=0)), "DAY")
+    assert r["stockout_date"] is not None and r["stockout_date"] < date(2024, 5, 1)
+    assert r["status"] in ("order_now", "order_later") and r["order_qty"] > 0
+    assert r["order_by"] + timedelta(days=90) <= r["stockout_date"]  # было: заказ только на декабрь, после партии

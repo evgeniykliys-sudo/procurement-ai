@@ -210,6 +210,10 @@ def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None) -> Dat
     born_later = (sku["created"].notna() & (sku["created"] > month)
                   & ~sku["sku_id"].isin(sales["sku_id"]))
     sku = _refresh_sku(sku[~born_later], sales, po, as_of)
+    # справочник поставщиков посчитан по всей выгрузке: плечо из него — знание из будущего
+    # (поставщик, чей первый заказ позже `as_of`, получил бы чужое плечо); на дату — только из заказов
+    suppliers = ds.suppliers.copy()
+    suppliers["median_planned_lead_days"] = np.nan
     return replace(ds, sku=sku.reset_index(drop=True), sales=sales.reset_index(drop=True),
                    stock=stock.reset_index(drop=True), po=po.reset_index(drop=True),
-                   receipts=receipts.reset_index(drop=True))
+                   receipts=receipts.reset_index(drop=True), suppliers=suppliers)

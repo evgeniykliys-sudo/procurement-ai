@@ -369,3 +369,20 @@ def test_year_forecast_not_above_twice_last_12m_sales_on_real_data(real_ds, as_o
     old = ps["history_months"] >= 12
     over = fc12[old] - 2 * ps.loc[old, "sales_12m"]
     assert (over <= 1e-6).all(), over[over > 1e-6].sort_values().tail(5).to_dict()
+
+
+def test_cap_on_feb_28_counts_feb_of_next_year_by_its_own_days(make_dataset):
+    """28.02.2024 (високосный): год до 28.02.2025 — 27 дней февраля из 28, а не из 29. Прогноз
+    года плана не выше 2× продаж (было 402 шт. при пределе 400)."""
+    from procurement.plan import build_plan
+    as_of = date(2024, 2, 28)
+    sales = make_dataset.series("S", "2023-02", [100, 100] + [0] * 11)
+    sales[-1]["partial_month"] = 1
+    stock = [{"sku_id": "S", "month": "2023-02", "stock_qty": 500},
+             {"sku_id": "S", "month": "2023-03", "stock_qty": 400}]
+    ds = make_dataset(sales=sales, stock=stock)
+    cfg = Config()
+    dem = build_demand(ds, cfg, as_of)
+    item = build_plan(ds, dem, cfg, as_of).items.set_index("sku_id").loc["S"]
+    assert item["sales_12m"] == 200 and "упущенный спрос — проверить" in per(dem, "S")["flags"]
+    assert item["forecast_12m"] <= 400 + 0.05

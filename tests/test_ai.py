@@ -228,3 +228,16 @@ def test_note_mentioning_unknown_sku_is_dropped():
     _, notes = ai._clean("## Главное\nok", {"SKU-AAA111": "как у SKU-FAKE99 — заказать 500",
                                             "SKU-BBB222": "в норме"}, {"SKU-AAA111", "SKU-BBB222"})
     assert notes == {"SKU-BBB222": "в норме"}
+
+
+def test_bridge_sent_to_llm_only_when_it_sets_the_need():
+    """`bridge` (разрыв до партии в пути, D14) — во входе ИИ только там, где он определил потребность:
+    0 при окне −593.9 модель описала бы как дефицит."""
+    plan = _plan(2)
+    plan["items"][0]["explain"].update(gross_window=-593.9, bridge=0.0, gross=-593.9)
+    plan["items"][1]["explain"].update(gross_window=-20.0, bridge=97.0, gross=97.0)
+    s = ai.build_summary(plan, _diff(1), BACKTEST)
+    top = {r["sku_id"]: r["explain"] for r in s["top_risks"]}
+    a, b = top[plan["items"][0]["sku_id"]], top[plan["items"][1]["sku_id"]]
+    assert "bridge" not in a and "gross_window" not in a
+    assert b["bridge"] == 97.0 and b["gross_window"] == -20.0

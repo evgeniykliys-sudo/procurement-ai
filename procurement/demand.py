@@ -246,6 +246,8 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
     rows_out, fc_rows = [], []
     days_in = calendar.monthrange(as_of.year, as_of.month)[1]
     first_share = (days_in - as_of.day + 1) / days_in
+    year_end = (pd.Timestamp(as_of) + pd.DateOffset(months=LEVEL_WINDOW)).date()
+    last_share = (year_end.day - 1) / calendar.monthrange(year_end.year, year_end.month)[1]
     for i, sku_id in enumerate(ids):
         cidx = cat_idx[cat_of[i]]
         hist = ~np.isnan(q[i])
@@ -301,9 +303,10 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
         sales_12m = int(np.nansum(q[i, win]))
         if history_months >= LEVEL_WINDOW:
             # 12 мес от даты анализа, как «прогноз на 12 мес» в плане: остаток текущего месяца,
-            # 11 следующих и начало 13-го до того же числа (при дате не 1-го числа)
+            # 11 следующих и дни 13-го до той же даты через год (её день — по 13-му месяцу: у
+            # 29.02 это 28.02, у февраля после високосного — 28 дней, а не 29)
             year_share = sum(idx[(month0 + k).month - 1]
-                             * (first_share if k == 0 else 1.0 - first_share if k == LEVEL_WINDOW else 1.0)
+                             * (first_share if k == 0 else last_share if k == LEVEL_WINDOW else 1.0)
                              for k in range(LEVEL_WINDOW + 1))
             year = base * trend * year_share
             cap = cfg.forecast_cap_vs_last_year * sales_12m

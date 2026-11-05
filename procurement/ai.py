@@ -89,6 +89,11 @@ def _short_item(r: dict, with_explain: bool = False) -> dict:
         out["explain"] = {k: ex[k] for k in EXPLAIN_KEYS if ex.get(k) is not None}
         if ex.get("lot_source") != "потолок":
             out["explain"].pop("cap", None)  # потолок нужен только там, где он сработал
+        if not (ex.get("bridge") or 0) > max(ex.get("gross_window") or 0, 0) + 0.05:
+            # разрыв до партии в пути (D14) не определил потребность — без него: LLM сравнила бы
+            # 0 с отрицательной потребностью окна и описала дефицит, которого расчёт не видит
+            out["explain"].pop("bridge", None)
+            out["explain"].pop("gross_window", None)
         if ex.get("merged_until_review") and ex.get("final") is not None:
             # округлённая потребность до добавления следующего заказа (D11) — готовым числом: LLM не досчитывает
             out["explain"]["final_before_merge"] = int(ex["final"]) - int(ex["merged_until_review"])

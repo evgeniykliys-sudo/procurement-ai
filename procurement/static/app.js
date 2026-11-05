@@ -300,7 +300,7 @@
     ];
     if (e.uplift && e.uplift !== 1) rows.push(exRow("×", "Поправка на недовоз поставщика", "доля исполнения ниже " + Math.round((cfg.reliability_min_ratio || 0.95) * 100) + "%", "×" + n1(e.uplift)));
     rows.push(exRow("⌈⌉", "Округление", esc(lotText), ""));
-    if (e.merged_until_review) rows.push(exRow("+", "Следующий заказ до пересмотра", "по расчёту он понадобился бы раньше следующего пересмотра через " + n0(cfg.review_period_days || 30) + " дн. — до него не дожить, заказываем сразу", n0(e.merged_until_review)));
+    if (e.merged_until_review) rows.push(exRow("+", "Следующий заказ до пересмотра", "по расчёту он понадобился бы раньше следующего пересмотра через " + n0(cfg.review_period_days || 30) + " дн. — до него не дожить, заказываем сразу" + (e.merged_capped ? "; вместе — не больше прогноза на " + (cfg.excess_cover_months || 12) + " мес (" + n0(e.cap) + " шт.)" : ""), n0(e.merged_until_review)));
     rows.push(exRow("=", e.excluded ? "К заказу (исключено)" : "К заказу", e.excluded ? esc(e.excluded) : (r.status === "order_later" ? "оценка на " + fdate(e.at) : ""), n0(e.final) + " шт.", "total"));
     var extra = "";
     if (e.lost_lead > 0) extra += '<div class="callout red">До прихода заказа товара не будет ≈ ' + n0(e.days_short) + " дн., потеряно ≈ " + n0(e.lost_lead) + " шт. Эти продажи не дозаказываются — заказ закрывает только окно после прихода. Чтобы не терять продажи: местный поставщик или ускоренная доставка.</div>";

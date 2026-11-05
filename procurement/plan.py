@@ -254,10 +254,11 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         """Первый день t ≥ start, когда проекция ниже страхового и либо не поднимается до t + R,
         либо до прихода, который её поднимет, теряется ≥ `stockout_min_lost_qty` шт. спроса (D14:
         партия в пути, пришедшая после дефицита, не отменяет заказ, который его предотвращает).
-        Пустой склад при спросе дня — ниже страхового и при страховом 0 (`safety_cap_months = 0`)."""
+        Остатка на начало дня не хватит на спрос дня — ниже страхового и при страховом 0
+        (`safety_cap_months = 0`), в том числе когда партия придёт уже следующим утром."""
         R = int(cover_target[i])
         below = proj < safety_t[i] - EPS
-        below[:D] |= (proj[:D] <= EPS) & (daily[i] > EPS)
+        below[:D] |= proj[:D] < daily[i] - EPS
         for t in np.flatnonzero(below[start:D_fc]) + start:
             w = below[t:min(t + R, D) + 1]
             if w.all():
@@ -406,16 +407,16 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         elif cross_t is None:
             status = "ok"
         else:
-            # первый заказ — на дату пересечения (до пересмотра — сегодня); сегодня вышел 0 шт.
-            # (покрытие R короче пересмотра: остаток к приходу ещё выше страхового) — следующая дата
-            # пересечения, если она до пересмотра: к следующему пересмотру её уже пропустили бы
+            # первый заказ — на дату пересечения (до пересмотра — сегодня); вышел 0 шт. (потребность
+            # меньше минимального заказа или покрытие R короче пересмотра: остаток к приходу ещё выше
+            # страхового) — следующая дата пересечения, как у повторных заказов календаря (D15)
             ob_t = cross_t - L
             d0 = 0 if ob_t <= cfg.review_period_days else ob_t
             first = need_at(i, d0, proj)
             d1, q1 = d0, int(first["final"])
-            while q1 <= 0 and d0 == 0:
+            while q1 <= 0:
                 t = next_cross(i, proj, d1 + L + 1)
-                if t is None or t - L > cfg.review_period_days:
+                if t is None:
                     break
                 d1 = t - L
                 q1 = int(need_at(i, d1, proj)["final"])
@@ -446,7 +447,11 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         # `review_period_days` (сезон набирает ход, а каждый заказ покрывает R дн.; или R короче
         # пересмотра) — в этот же заказ (D11)
         if status == "order_now":
-            total = sum(q for d, q in seq if d <= cfg.review_period_days)
+            # и объединённый — не больше потолка F3 (прогноз за excess_cover_months от сегодня)
+            want = sum(q for d, q in seq if d <= cfg.review_period_days)
+            total = min(want, max(int(explain["cap"]), order_qty))
+            if want > total:
+                explain["merged_capped"] = True
             if total > order_qty:
                 explain["merged_until_review"] = int(total - order_qty)
                 explain["final"] = order_qty = int(total)

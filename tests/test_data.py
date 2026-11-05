@@ -154,3 +154,24 @@ def test_cut_dataset_mid_month_keeps_sales_to_date(make_dataset):
     part = make_dataset(sales=make_dataset.series("SKU-1", "2023-01", [62] * 12 + [24], partial_last=True), stock=stock)
     c = cut_dataset(part, date(2024, 1, 7), partial_day=13)
     assert c.sales.loc[c.sales["month"] == pd.Period("2024-01", "M"), "qty_sold"].tolist() == [12]
+
+
+def test_cut_dataset_does_not_take_lead_from_supplier_dim(make_dataset):
+    """Справочник поставщиков посчитан по всей выгрузке: на прошлую дату плечо поставщика — только
+    из его заказов до неё (у SUP-2 первый заказ позже — плечо по умолчанию, а не 30 дн. из справочника)."""
+    from procurement.supply import lead_times
+    sales = make_dataset.series("A", "2024-01", [5] * 12) + make_dataset.series("B", "2024-01", [5] * 12)
+    skus = [{"sku_id": "A", "supplier_id": "SUP-1"}, {"sku_id": "B", "supplier_id": "SUP-2"}]
+    po = [{"po_id": "P1", "sku_id": "A", "supplier_id": "SUP-1", "order_date": "2024-02-01",
+           "promised_date": "2024-05-01", "planned_lead_days": 90, "status": "closed", "qty_ordered": 10},
+          {"po_id": "P2", "sku_id": "C", "supplier_id": "SUP-2", "order_date": "2024-10-02",
+           "promised_date": "2024-11-01", "planned_lead_days": 30, "status": "closed", "qty_ordered": 10}]
+    suppliers = [{"supplier_id": "SUP-1", "median_planned_lead_days": 90},
+                 {"supplier_id": "SUP-2", "median_planned_lead_days": 30}]
+    ds = make_dataset(skus=skus, sales=sales, po=po, suppliers=suppliers)
+    cfg = Config()
+    full = lead_times(ds, cfg).set_index("sku_id")
+    assert full.loc["B", "lead_days"] == 30 and full.loc["B", "lead_source"] == "supplier"
+    cut = lead_times(cut_dataset(ds, date(2024, 8, 1)), cfg).set_index("sku_id")
+    assert cut.loc["A", "lead_days"] == 90 and cut.loc["A", "lead_source"] == "sku"
+    assert cut.loc["B", "lead_source"] == "default" and cut.loc["B", "lead_days"] == cfg.lead_default_days
