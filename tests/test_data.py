@@ -109,10 +109,10 @@ def test_cut_dataset_real_2026_07_01_is_consistent(real_ds):
     assert (c.receipts["receipt_date"] < cut_on).all()
     assert (c.po["order_date"] < cut_on).all()
     fut = c.po[c.po["promised_date"] >= cut_on]
-    assert (fut["status"] == "open").all() and (fut["qty_received"] == 0).all()
-    # «в пути» на дату обрезки — всё, что ещё не пришло по плану
-    src = real_ds.po[(real_ds.po["order_date"] < cut_on) & (real_ds.po["promised_date"] >= cut_on)]
-    assert fut["qty_pending"].sum() == (src["qty_pending"] + src["qty_received"]).sum()
+    assert (fut["status"] == "open").all()
+    # «в пути» на дату обрезки — заказано минус пришедшее до неё по приходам
+    assert (fut["qty_received"] + fut["qty_pending"] == fut["qty_ordered"]).all()
+    assert fut["qty_received"].sum() <= c.receipts["qty"].sum()
     # справочник пересчитан на дату: мёртвые = без продаж за 12 мес
     assert c.sku["last_sale_month"].dropna().max() <= pd.Period("2026-06", "M")
     assert (c.sku["on_order_qty"] >= 0).all()
@@ -207,3 +207,44 @@ def test_cut_keeps_late_closed_order_in_transit(make_dataset):
     assert cut.loc["PO-1", "status"] == "open"
     assert cut.loc["PO-1", "qty_pending"] == 70 and cut.loc["PO-1", "qty_received"] == 30
     assert cut.loc["PO-2", "status"] == "closed"  # получен целиком до среза
+
+
+def test_cut_dataset_future_order_partly_received_before_cut(make_dataset):
+    """Заказ 100 шт. с плановой датой после среза, 60 пришли до среза: в пути 40, не 100."""
+    ds = make_dataset(
+        skus=[{"sku_id": "SKU-P"}],
+        sales=make_dataset.series("SKU-P", "2024-01", [10] * 6),
+        po=[{"po_id": "PO-1", "sku_id": "SKU-P", "order_date": "2024-01-10", "promised_date": "2024-06-01",
+             "status": "closed", "qty_ordered": 100, "qty_received": 100, "qty_pending": 0}],
+        receipts=[{"sku_id": "SKU-P", "receipt_date": "2024-03-01", "qty": 60},
+                  {"sku_id": "SKU-P", "receipt_date": "2024-06-01", "qty": 40}])
+    po = cut_dataset(ds, date(2024, 4, 1)).po.set_index("po_id")
+    assert po.loc["PO-1", "status"] == "open"
+    assert po.loc["PO-1", "qty_pending"] == 40 and po.loc["PO-1", "qty_received"] == 60
+
+
+def test_cut_dataset_future_closed_order_with_zero_qty_fields(make_dataset):
+    """Закрытый заказ, полученный после среза, с qty_received = qty_pending = 0 (D01): в пути весь заказ."""
+    ds = make_dataset(
+        skus=[{"sku_id": "SKU-E"}],
+        sales=make_dataset.series("SKU-E", "2024-01", [10] * 6),
+        po=[{"po_id": "PO-1", "sku_id": "SKU-E", "order_date": "2024-01-10", "promised_date": "2024-04-10",
+             "status": "closed", "qty_ordered": 100, "qty_received": 0, "qty_pending": 0}],
+        receipts=[{"sku_id": "SKU-E", "receipt_date": "2024-04-10", "qty": 100}])
+    po = cut_dataset(ds, date(2024, 3, 1)).po.set_index("po_id")
+    assert po.loc["PO-1", "status"] == "open" and po.loc["PO-1", "qty_pending"] == 100
+
+
+def test_cut_dataset_before_any_sale_does_not_fail(make_dataset):
+    """Срез, на который продаж ещё не было ни у одной карточки: не падает, last_sale_month пуст."""
+    ds = make_dataset(skus=[{"sku_id": "SKU-Z"}],
+                      sales=make_dataset.series("SKU-Z", "2024-01", [0, 0, 5, 5], orders=[0, 0, 1, 1]))
+    c = cut_dataset(ds, date(2024, 2, 1))
+    assert c.sku["last_sale_month"].isna().all() and (c.sku["months_with_sales"] == 0).all()
+
+
+def test_cut_dataset_before_first_sales_month_does_not_fail(make_dataset):
+    """Срез раньше первого месяца продаж (бэктест ранней даты): продаж нет вовсе — не падает."""
+    ds = make_dataset(skus=[{"sku_id": "SKU-Z"}], sales=make_dataset.series("SKU-Z", "2024-03", [5, 5]))
+    c = cut_dataset(ds, date(2024, 1, 1))
+    assert c.sku["first_sale_month"].isna().all() and c.sku["last_sale_month"].isna().all()

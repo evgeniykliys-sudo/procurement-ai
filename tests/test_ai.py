@@ -264,3 +264,35 @@ def test_invented_numbers_dates_and_suppliers_are_dropped():
     assert kept == {}
     _, kept = ai._clean(md, {"SKU-AAA111": "страховой 373 шт.", "SKU-BBB": "x"}, allowed, source=src)
     assert kept == {"SKU-AAA111": "страховой 373 шт."}
+
+
+@pytest.mark.parametrize("text, bad", [
+    ("рост в 1.2 раза, 66.1 шт. в месяц", []),      # дроби из входа — не даты
+    ("срок 2026-08-13", []),
+    ("срок 2026-12-31", ["2026-12-31"]),          # ISO-дата сверяется целиком
+    ("падение -37%", []),
+    ("снижение на 37%", []),                      # знак словом
+    ("рост -45%", ["-45"]),
+    ("-1.2", ["1.2"]),                            # знак у дроби, похожей на дату
+    ("срок 13.08", []),
+    ("срок 14.08", ["14.08"]),
+    ("диапазон 10-20", []),                       # дефис диапазона — не минус
+    ("1.3 раза", ["1.3"]),
+])
+def test_unknown_numbers_counterexamples(text, bad):
+    from procurement.ai import _numbers_of, _unknown_numbers
+    nums, dates = set(), set()
+    _numbers_of({"a": 1.2, "b": 66.1, "c": -37.0, "eta": "2026-08-13"}, nums, dates)
+    assert _unknown_numbers(text, nums, dates) == bad
+
+
+def test_note_emptied_by_check_is_not_ok_and_not_cached(calls, tmp_path, monkeypatch):
+    """Все строки записки вычищены (выдуманный код/число): записки нет — ok False, в кеш не пишется."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", KEY)
+    log = calls(_llm(json.dumps({"markdown": "Закупить SKU-NOTREAL 987654 шт.", "sku_notes": {}})))
+    cache = tmp_path / "cache"
+    note = ai.analyst_note(_summary(), Config(), cache)
+    assert note["ok"] is False and "не осталось" in note["error"]
+    assert not cache.exists() or not any(cache.iterdir())
+    ai.analyst_note(_summary(), Config(), cache)
+    assert len(log) == 2  # не из кеша

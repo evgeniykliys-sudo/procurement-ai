@@ -563,3 +563,14 @@ def test_cover_starts_when_stock_runs_out_not_when_a_unit_is_lost(make_dataset):
     assert z["cover_days"] == 0 and z["stockout_date"] == AS_OF
     assert "deficit_unavoidable" in z["risk"]  # до прихода (90 дн.) теряется ≈ 3 шт.
     assert 85 <= s["cover_days"] <= 92 and s["stockout_date"] == AS_OF + timedelta(days=int(s["cover_days"]))
+
+
+def test_short_forecast_horizon_still_orders_for_long_lead(make_dataset):
+    """forecast_months = 3 при плече 180 дн., пустом складе и 100 шт./мес: дефицит неизбежен, но
+    заказ нужен и при коротком прогнозе — окно поиска заказа не короче плеча + покрытия."""
+    ds = build(make_dataset, sku("LONG", stock=0, lead=180))
+    short = row(plan_of(ds, Config(forecast_months=3)), "LONG")
+    full = row(plan_of(ds, Config(forecast_months=18)), "LONG")
+    assert "deficit_unavoidable" in short["risk"]
+    assert short["order_qty"] > 0
+    assert short["order_qty"] == full["order_qty"]

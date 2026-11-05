@@ -366,7 +366,7 @@ def test_year_forecast_not_above_twice_last_12m_sales_on_real_data(real_ds, as_o
     tail = (as_of.day - 1) / (p0 + 12).days_in_month
     fc["qty"] *= np.where(fc["period"] == p0 + 12, tail, 1.0)
     fc12 = fc.groupby("sku_id")["qty"].sum().reindex(ps.index)
-    old = ps["history_months"] >= 12
+    old = (ps["history_months"] >= 12) & ~ps["flags"].astype(str).str.contains("уровень по неполному месяцу")  # потолок к ним не применяется
     over = fc12[old] - 2 * ps.loc[old, "sales_12m"]
     assert (over <= 1e-6).all(), over[over > 1e-6].sort_values().tail(5).to_dict()
 
@@ -396,5 +396,14 @@ def test_sales_only_in_current_partial_month_give_demand(make_dataset):
     ds = make_dataset(sales=make_dataset.series("NEW", "2022-03", zeros + [60], partial_last=True))
     as_of = date(2024, 3, 13)
     r = build_demand(ds, Config(), as_of).per_sku.set_index("sku_id").loc["NEW"]
+    assert r["base_monthly"] == pytest.approx(60 / (12 / 31), rel=1e-6)
+    assert "уровень по неполному месяцу" in r["flags"]
+
+
+def test_resumed_sales_after_long_pause_give_demand(make_dataset):
+    """Старая продажа, 23 мес. без продаж, 60 шт. за 12 дн. текущего месяца: продажа раньше окна
+    уровня не глушит возобновившийся спрос — уровень по неполному месяцу, не «нет спроса»."""
+    ds = make_dataset(sales=make_dataset.series("BACK", "2022-03", [5] + [0] * 23 + [60], partial_last=True))
+    r = build_demand(ds, Config(), date(2024, 3, 13)).per_sku.set_index("sku_id").loc["BACK"]
     assert r["base_monthly"] == pytest.approx(60 / (12 / 31), rel=1e-6)
     assert "уровень по неполному месяцу" in r["flags"]

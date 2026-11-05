@@ -198,6 +198,10 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
     daily = np.repeat(fc_all / m_days, m_days, axis=1)             # спрос по дням [n, D]
     D = daily.shape[1]
     D_fc = int(m_days[:n_fc].sum())                                # дни самого прогноза
+    # окно поиска заказа по SKU: не короче плеча + покрытия, даже если прогноз короче (иначе при
+    # forecast_months = 3 и плече 180 дн. дефицит после прогноза не дал бы заказа); дальше
+    # прогноза — повтор его хвоста
+    D_cross = np.minimum(np.maximum(D_fc, horizon), D).astype(int)
     arr_d = np.zeros((n, D + 1))
     for s, eta, q in zip(arrivals["sku_id"], arrivals["eta"], arrivals["qty"]):
         if s in pos:
@@ -259,7 +263,7 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         R = int(cover_target[i])
         below = proj < safety_t[i] - EPS
         below[:D] |= proj[:D] < daily[i] - EPS
-        for t in np.flatnonzero(below[start:D_fc]) + start:
+        for t in np.flatnonzero(below[start:int(D_cross[i])]) + start:
             w = below[t:min(t + R, D) + 1]
             if w.all():
                 return int(t)
@@ -343,7 +347,7 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         raw_flags = per["flags"].iloc[i]
         flags = list(raw_flags) if isinstance(raw_flags, list) else []
         L, R = int(lead[i]), int(cover_target[i])
-        has_demand = cum_dem[i, D_fc] > EPS
+        has_demand = cum_dem[i, D_cross[i]] > EPS
         dem_pos = daily[i] > EPS
 
         # дефицит: первый день, к концу которого потеряно ≥ stockout_min_lost_qty шт. спроса

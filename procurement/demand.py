@@ -293,15 +293,17 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
             base = float(np.median(seen) if is_new else seen.mean())
             level_from_window = False
             flags.append(FLAG_LEVEL_PLAIN)
-        if np.nansum(q[i]) <= 0 and elapsed > 0 and float(cur_qty.get(sku_id, 0)) > 0:
-            # продажи только в текущем месяце (новинка или ожившая карточка): в полных месяцах 0, но спрос
-            # виден — уровень = продажи месяца до даты / доля прошедших дней (/ сезон месяца, если он
-            # не мал), а не «нет спроса»: при плече 4–6 мес. пропущенный месяц — пропущенный сезон
-            si = float(cidx[month0.month - 1])
-            base = float(cur_qty[sku_id]) / elapsed / (si if si >= min_idx else 1.0)
-            level_from_window = False
-            flags.append(FLAG_PARTIAL_ONLY)
         base = 0.0 if np.isnan(base) else base
+        if np.nansum(q[i, win]) <= 0 and elapsed > 0 and float(cur_qty.get(sku_id, 0)) > 0:
+            # в окне уровня продаж нет, а в текущем месяце есть (новинка или ожившая карточка — старые
+            # продажи раньше окна не в счёт): уровень = продажи месяца до даты / доля прошедших дней
+            # (/ сезон месяца, если он не мал), а не «нет спроса»: при плече 4–6 мес. пропущенный
+            # месяц — пропущенный сезон. Уровень по длинному окну выше — остаётся он.
+            si = float(cidx[month0.month - 1])
+            partial = float(cur_qty[sku_id]) / elapsed / (si if si >= min_idx else 1.0)
+            if partial > base:
+                base, level_from_window = partial, False
+                flags.append(FLAG_PARTIAL_ONLY)
 
         # тренд — только если уровень из обычного окна и в предыдущих 12 мес сезона достаточно
         trend = 1.0

@@ -161,6 +161,14 @@ def detect_as_of(ds: Dataset, cfg: Config) -> date:
     return date(nxt.year, nxt.month, 1)
 
 
+def _map_month(ids: pd.Series, by_sku: pd.Series) -> pd.Series:
+    """`ids.map` по месяцам SKU; пустая группа (на дату продаж ещё не было) — пустые месяцы:
+    map по пустому PeriodArray в pandas падает (Cannot cast PeriodArray to dtype float64)."""
+    if by_sku.empty:
+        return pd.Series(pd.NaT, index=ids.index, dtype="period[M]")
+    return ids.map(by_sku)
+
+
 def _refresh_sku(sku: pd.DataFrame, sales: pd.DataFrame, po: pd.DataFrame, as_of: date) -> pd.DataFrame:
     """Пересчитывает поля активности справочника по обрезанным данным так, как их считает ERP
     (сверено с полной выгрузкой: наценка — средняя, взвешенная по количеству, за месяцы
@@ -174,8 +182,8 @@ def _refresh_sku(sku: pd.DataFrame, sales: pd.DataFrame, po: pd.DataFrame, as_of
     markup = (w_mk / w_qty.where(w_qty > 0)).round(0)
     open_po = po[po["status"] == "open"].groupby("sku_id")["qty_pending"].sum()
     ids = sku["sku_id"]
-    sku["first_sale_month"] = ids.map(sales.groupby("sku_id")["month"].min())
-    sku["last_sale_month"] = ids.map(active["month"].max())
+    sku["first_sale_month"] = _map_month(ids, sales.groupby("sku_id")["month"].min())
+    sku["last_sale_month"] = _map_month(ids, active["month"].max())
     sku["months_with_sales"] = ids.map(active.size()).fillna(0).astype("int64")
     sku["qty_total"] = ids.map(sales.groupby("sku_id")["qty_sold"].sum()).fillna(0).astype("int64")
     sku["avg_markup_pct_12m"] = ids.map(markup).astype("float64")
@@ -192,8 +200,8 @@ def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None,
     берёт, а остаток на дату (`stock_on`) вычитает из снимка на 1-е. Если в выгрузке этот месяц
     сам неполный (выгрузка на `partial_day`-е), доля считается от его `partial_day − 1` дней.
     Снимки остатка на 1-е ≤ `as_of`, приходы раньше `as_of`, заказы с `order_date < as_of`.
-    Заказ с плановой датой ≥ `as_of` на ту дату считается ещё в пути (приближение):
-    `qty_pending += qty_received`, `qty_received = 0`, `status = open`. Закрытый заказ с плановой
+    Заказ с плановой датой ≥ `as_of` на ту дату ещё в пути: `status = open`,
+    `qty_received` = пришедшее до `as_of` (по приходам), `qty_pending` = заказано − пришедшее. Закрытый заказ с плановой
     датой до `as_of`, к которому приходы (сопоставленные, как для надёжности поставщика) пришли
     и после `as_of`, на ту дату тоже ещё ехал — опаздывал (D18): `status = open`,
     `qty_pending` = пришедшее с `as_of`, `qty_received` = пришедшее до. Карточки, заведённые
@@ -214,17 +222,27 @@ def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None,
     stock = ds.stock[ds.stock["month"] <= month].copy()
     receipts = ds.receipts[ds.receipts["receipt_date"] < as_of].copy()
     po = ds.po[ds.po["order_date"] < as_of].copy()
-    future = po["promised_date"] >= as_of
-    po.loc[future, "qty_pending"] = po.loc[future, "qty_pending"] + po.loc[future, "qty_received"]
-    po.loc[future, "qty_received"] = 0
-    po.loc[future, "status"] = "open"
     from .supply import CLOSED_STATUSES, _received_by_receipts  # supply импортирует data
     window = receipt_window_days if receipt_window_days is not None else Config().reliability_receipt_window_days
-    done = ~future & po["status"].isin(CLOSED_STATUSES) & po["supplier_id"].notna()
+    for col in ("qty_received", "qty_pending"):
+        po[col] = po[col].fillna(0).astype("int64")
+    ordered = po["qty_ordered"].fillna(0).astype("int64")
+    future = po["promised_date"] >= as_of
+    with_sup = po["supplier_id"].notna()
+    # приходы разбирают все заказы поставщика по очереди даты заказа — и открытые, и с будущей
+    # плановой датой, иначе их приход достался бы старому закрытому заказу второй раз
+    before = pd.Series(0, index=po.index, dtype="int64")
+    after = before.copy()
+    if with_sup.any():
+        b, a = _received_by_receipts(po[with_sup], ds.receipts, window, split_at=as_of)
+        before.loc[b.index], after.loc[a.index] = b, a
+    # заказ с плановой датой >= as_of: на ту дату ещё в пути всё, что не пришло до as_of (по приходам;
+    # без поставщика приходы не сопоставить — в пути весь заказ, а не поля ERP на дату выгрузки)
+    po.loc[future, "qty_received"] = before[future]
+    po.loc[future, "qty_pending"] = (ordered[future] - before[future]).clip(lower=0)
+    po.loc[future, "status"] = "open"
+    done = ~future & po["status"].isin(CLOSED_STATUSES) & with_sup
     if done.any():
-        # приходы разбирают все заказы поставщика по очереди даты заказа — и открытые, и с будущей
-        # плановой датой, иначе их приход достался бы старому закрытому заказу второй раз
-        before, after = _received_by_receipts(po[po["supplier_id"].notna()], ds.receipts, window, split_at=as_of)
         after = after[done[done].index]
         late = after[after > 0].index
         po.loc[late, "status"] = "open"

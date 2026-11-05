@@ -31,6 +31,8 @@ ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})")
 DATE_RE = re.compile(r"(?<![\d.,])(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?(?![.,]?\d)")
 MONTH_RE = re.compile(r"(?<![\d.,])(\d{1,2})\.(\d{4})(?!\d)")
 NUM_RE = re.compile(r"\d{1,3}(?:[   ]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?")
+# число со знаком: минус — только отдельно стоящий («-37%», «−5»), не дефис диапазона «10-20»
+SIGNED_NUM_RE = re.compile(r"(?:(?<![\w.,])([-−]))?(" + NUM_RE.pattern + ")")
 FREE_NUM = 31  # целые до 31 (дни, месяцы, «2 позиции») не сверяются — сверяются количества и проценты
 
 # Порядок важности рисков и сколько мест в топ-15 у каждого (остаток добирается по порядку).
@@ -176,7 +178,7 @@ def _fail(error: str, model: str) -> dict:
 
 
 def _to_float(token: str) -> float:
-    return float(re.sub(r"[   ]", "", token).replace(",", "."))
+    return float(re.sub(r"[   ]", "", token).replace(",", ".").replace("−", "-"))
 
 
 def _numbers_of(value, nums: set, dates: set) -> None:
@@ -191,8 +193,8 @@ def _numbers_of(value, nums: set, dates: set) -> None:
         for y, m, d in ISO_RE.findall(value):
             dates.update({(int(d), int(m), int(y)), (int(d), int(m), None), (None, int(m), int(y))})
             nums.add(float(int(y)))
-        for tok in NUM_RE.findall(ISO_RE.sub(" ", CODE_RE.sub(" ", value))):
-            nums.add(round(_to_float(tok), 1))
+        for sign, tok in SIGNED_NUM_RE.findall(ISO_RE.sub(" ", CODE_RE.sub(" ", value))):
+            nums.add(round(_to_float(sign + tok), 1))
     elif isinstance(value, dict):
         for k, v in value.items():
             _numbers_of(k, nums, dates)
@@ -203,22 +205,42 @@ def _numbers_of(value, nums: set, dates: set) -> None:
 
 
 def _unknown_numbers(text: str, nums: set, dates: set) -> list[str]:
-    """Числа и даты текста, которых нет во входе; целые до `FREE_NUM` не сверяются."""
+    """Числа и даты текста, которых нет во входе; целые до `FREE_NUM` не сверяются.
+
+    ISO-дата (2026-12-31) сверяется целиком, а не тремя числами. «1.2» / «66.1» без года —
+    либо дата, либо дробь: годится, если во входе есть хоть одно из прочтений. Минус перед
+    числом — часть числа: «-37%» сверяется с -37; число без знака («снижение на 37%») — с ±37."""
     t = CODE_RE.sub(" ", text)
     bad = []
+
+    def known_num(sign: str, tok: str) -> bool:
+        x = _to_float(sign + tok)
+        if x.is_integer() and abs(x) <= FREE_NUM:
+            return True
+        return round(x, 1) in nums or (not sign and round(-x, 1) in nums)
+
+    for m in ISO_RE.finditer(t):
+        if (int(m.group(3)), int(m.group(2)), int(m.group(1))) not in dates:
+            bad.append(m.group(0))
+    t = ISO_RE.sub(" ", t)
     for m in DATE_RE.finditer(t):
-        if 1 <= int(m.group(2)) <= 12:
-            key = (int(m.group(1)), int(m.group(2)), int(m.group(3)) if m.group(3) else None)
-            if key not in dates:
-                bad.append(m.group(0))
+        d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        if not 1 <= mo <= 12:
+            continue  # не дата — проверится как число
+        if (d, mo, int(y) if y else None) in dates:
+            continue
+        k = m.start()
+        sign = "-" if k and t[k - 1] in "-−" and (k < 2 or not (t[k - 2].isalnum() or t[k - 2] in ".,")) else ""
+        if y is None and known_num(sign, m.group(0)):
+            continue  # «1.2», «66.1» — дробь из входа
+        bad.append(m.group(0))
     t = DATE_RE.sub(lambda m: " " if 1 <= int(m.group(2)) <= 12 else m.group(0), t)
     for m in MONTH_RE.finditer(t):
         if (None, int(m.group(1)), int(m.group(2))) not in dates:
             bad.append(m.group(0))
-    for tok in NUM_RE.findall(MONTH_RE.sub(" ", t)):
-        x = _to_float(tok)
-        if not (x.is_integer() and x <= FREE_NUM) and round(x, 1) not in nums:
-            bad.append(tok)
+    for sign, tok in SIGNED_NUM_RE.findall(MONTH_RE.sub(" ", t)):
+        if not known_num(sign, tok):
+            bad.append(sign + tok)
     return bad
 
 
@@ -307,6 +329,8 @@ def analyst_note(summary: dict, cfg, cache_dir) -> dict:
         return _fail("в ответе ИИ нет записки (поле markdown)", model)
     allowed = set(CODE_RE.findall(user))
     markdown, notes = _clean(markdown, notes if isinstance(notes, dict) else {}, allowed, source=summary)
+    if not markdown.strip():  # все строки вычищены проверкой — записки нет, в кеш не пишем
+        return _fail("в записке ИИ не осталось строк после проверки чисел и кодов", model)
     note = {"ok": True, "markdown": markdown, "sku_notes": notes, "error": None, "model": model}
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(note, ensure_ascii=False, indent=1), encoding="utf-8")
