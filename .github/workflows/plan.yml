@@ -1,5 +1,6 @@
 # План закупок: расчёт и история прогонов → дашборд на GitHub Pages → дайджест в Telegram.
-# Запуск: каждый день в 00:00 UTC (07:00 по Новосибирску), при пуше новых CSV в data/raw/ и кнопкой
+# Запуск: каждый день в 23:47 UTC (06:47 по Новосибирску — к 07:00 план готов; не ровный час: в 00:00 UTC
+# у GitHub пик, плановые запуски там задерживаются и пропадают), при пуше новых CSV в data/raw/ и кнопкой
 # «Run workflow» на вкладке Actions. Секреты — Settings → Secrets and variables → Actions
 # (DEEPSEEK_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID); без них расчёт и сайт работают,
 # записки ИИ и дайджеста не будет. Петли нет: бот коммитит только history/ и с [skip ci],
@@ -12,7 +13,7 @@ name: План закупок
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "47 23 * * *"
   push:
     branches: [main, master]
     paths:

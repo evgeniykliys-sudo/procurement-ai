@@ -202,3 +202,26 @@ def test_site_rebuild_removes_only_own_files(run, tmp_path):
     with pytest.raises(ValueError, match="data/raw/sku_dim.csv"):
         build_site(run["plan"], run["diff"], run["backtest"], note, [], out_dir=site)
     assert (site / "data" / "raw" / "sku_dim.csv").exists() and (site / "index.html").exists()
+
+
+def test_site_build_failure_does_not_lock_the_folder(run, tmp_path, monkeypatch):
+    """Сбой посреди сборки (после выгрузки нового поставщика): манифест всё равно пишется — повторная
+    сборка не отказывает из-за собственного файла; подсказка в отказе — не та же папка."""
+    from procurement import site as site_mod
+    out = tmp_path / "site"
+    note = {"ok": False, "markdown": "", "sku_notes": {}, "error": "нет", "model": ""}
+    plan_one = json.loads(json.dumps(run["plan"]))
+    first = plan_one["supplier_orders"][0]["supplier_id"]
+    plan_one["supplier_orders"] = [o for o in plan_one["supplier_orders"] if o["supplier_id"] == first]
+    build_site(plan_one, run["diff"], run["backtest"], note, [], out_dir=out)
+    real_env = site_mod._env
+    monkeypatch.setattr(site_mod, "_env", lambda: (_ for _ in ()).throw(RuntimeError("сбой шаблона")))
+    with pytest.raises(RuntimeError):
+        build_site(run["plan"], run["diff"], run["backtest"], note, [], out_dir=out)
+    monkeypatch.setattr(site_mod, "_env", real_env)
+    build_site(run["plan"], run["diff"], run["backtest"], note, [], out_dir=out)
+    assert (out / "index.html").exists()
+    (out / "mine.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="site_new") as err:
+        build_site(run["plan"], run["diff"], run["backtest"], note, [], out_dir=out)
+    assert "--site site " not in str(err.value) + " "

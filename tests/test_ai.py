@@ -168,7 +168,8 @@ def test_success_request_shape_and_invented_skus_removed(calls, tmp_path, monkey
     summary = _summary()
     real = summary["top_risks"][0]["sku_id"]
     content = json.dumps({
-        "markdown": f"## Главное\n- Срочно {real}: заказать 100 шт.\n- Срочно SKU-FAKE99: заказать 5 шт.\n## Риски\nМало.",
+        "markdown": f"## Главное\n- Срочно {real}: заказать {summary['top_risks'][0]['order_qty']} шт.\n"
+                    "- Срочно SKU-FAKE99: заказать 5 шт.\n## Риски\nМало.",
         "sku_notes": {real: "Остаток кончится до прихода.", "SKU-FAKE99": "Выдумано."},
     }, ensure_ascii=False)
     log = calls(_llm(content))
@@ -241,3 +242,25 @@ def test_bridge_sent_to_llm_only_when_it_sets_the_need():
     a, b = top[plan["items"][0]["sku_id"]], top[plan["items"][1]["sku_id"]]
     assert "bridge" not in a and "gross_window" not in a
     assert b["bridge"] == 97.0 and b["gross_window"] == -20.0
+
+
+def test_invented_numbers_dates_and_suppliers_are_dropped():
+    """Строка с числом, датой или поставщиком не из входа — досчитано или выдумано — вычищается;
+    числа входа в любом написании («34 945», «0,5», «66%», 372,5 → «373»), даты ДД.ММ.ГГГГ и
+    небольшие целые (дни, «2 позиции») остаются."""
+    src = {"kpi": {"order_now_qty": 34945, "share": 0.5, "pct": 66}, "as_of": "2026-08-13",
+           "top_risks": [{"sku_id": "SKU-AAA111", "supplier_id": "SUP-111", "explain": {"safety": 372.5}}]}
+    md = "\n".join([
+        "## Главное",
+        "- К заказу 34 945 шт., доля 0,5, ошибка 66%; данные на 13.08.2026, 2 позиции срочно.",
+        "- По SKU-AAA111 страховой 373 шт., поставщик SUP-111.",
+        "- Итого с прошлым — 35 000 шт.",          # досчитано
+        "- Кончится 15.09.2026.",                    # даты нет во входе
+        "- Связаться с SUP-999.",                    # поставщика нет во входе
+    ])
+    allowed = {"SKU-AAA111", "SUP-111"}
+    out, kept = ai._clean(md, {"SKU-AAA111": "страховой 1 234 шт."}, allowed, source=src)
+    assert out.splitlines() == md.splitlines()[:3]
+    assert kept == {}
+    _, kept = ai._clean(md, {"SKU-AAA111": "страховой 373 шт.", "SKU-BBB": "x"}, allowed, source=src)
+    assert kept == {"SKU-AAA111": "страховой 373 шт."}

@@ -386,3 +386,15 @@ def test_cap_on_feb_28_counts_feb_of_next_year_by_its_own_days(make_dataset):
     item = build_plan(ds, dem, cfg, as_of).items.set_index("sku_id").loc["S"]
     assert item["sales_12m"] == 200 and "упущенный спрос — проверить" in per(dem, "S")["flags"]
     assert item["forecast_12m"] <= 400 + 0.05
+
+
+def test_sales_only_in_current_partial_month_give_demand(make_dataset):
+    """Новинка (или карточка с нулями в полных месяцах) продаётся только в текущем неполном месяце:
+    60 шт. за 12 дн. — не «нет спроса», а уровень ≈ 60 / (12/31) с флагом; потолок «2× продаж
+    12 мес.» к нулю продаж не применяется."""
+    zeros = [0] * 24
+    ds = make_dataset(sales=make_dataset.series("NEW", "2022-03", zeros + [60], partial_last=True))
+    as_of = date(2024, 3, 13)
+    r = build_demand(ds, Config(), as_of).per_sku.set_index("sku_id").loc["NEW"]
+    assert r["base_monthly"] == pytest.approx(60 / (12 / 31), rel=1e-6)
+    assert "уровень по неполному месяцу" in r["flags"]

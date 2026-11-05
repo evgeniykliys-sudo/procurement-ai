@@ -136,6 +136,12 @@ def load_dataset(raw_dir) -> Dataset:
     tables = {f: _read_table(raw_dir, f) for f in SCHEMA}
     if tables["sales"].empty:
         raise DataError("Файл sales_monthly.csv пуст: нет ни одной строки продаж.")
+    dup = tables["sku"]["sku_id"].duplicated(keep=False)
+    if dup.any():  # две карточки одного SKU: остаток, плечо и партия разошлись бы по строкам
+        rows = ", ".join(str(i + 2) for i in dup[dup].index[:4]) + (" …" if dup.sum() > 4 else "")
+        sid = tables["sku"].loc[dup, "sku_id"].iloc[0]
+        raise DataError(f"Файл sku_dim.csv, колонка «sku_id»: SKU «{sid}» встречается больше одного раза "
+                        f"(строки {rows}) — у SKU должна быть одна карточка.")
     for f in ("sales", "stock"):
         tables[f] = tables[f].sort_values(["sku_id", "month"], kind="stable").reset_index(drop=True)
     return Dataset(**tables)
@@ -148,7 +154,9 @@ def detect_as_of(ds: Dataset, cfg: Config) -> date:
         return cfg.as_of
     last = ds.sales["month"].max()
     if (ds.sales.loc[ds.sales["month"] == last, "partial_month"] == 1).any():
-        return date(last.year, last.month, cfg.partial_day)
+        # день выгрузки — не позже последнего дня месяца (partial_day = 31 у февраля — 28/29-е)
+        day = min(max(int(cfg.partial_day), 1), calendar.monthrange(last.year, last.month)[1])
+        return date(last.year, last.month, day)
     nxt = last + 1
     return date(nxt.year, nxt.month, 1)
 
@@ -175,7 +183,8 @@ def _refresh_sku(sku: pd.DataFrame, sales: pd.DataFrame, po: pd.DataFrame, as_of
     return sku
 
 
-def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None) -> Dataset:
+def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None,
+                receipt_window_days: int | None = None) -> Dataset:
     """Набор «как он выглядел бы» на `as_of` — для прошлого прогона и бэктеста.
 
     Продажи месяцев раньше месяца `as_of` (все полные); продажи месяца `as_of` до этой даты —
@@ -184,7 +193,10 @@ def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None) -> Dat
     сам неполный (выгрузка на `partial_day`-е), доля считается от его `partial_day − 1` дней.
     Снимки остатка на 1-е ≤ `as_of`, приходы раньше `as_of`, заказы с `order_date < as_of`.
     Заказ с плановой датой ≥ `as_of` на ту дату считается ещё в пути (приближение):
-    `qty_pending += qty_received`, `qty_received = 0`, `status = open`. Карточки, заведённые
+    `qty_pending += qty_received`, `qty_received = 0`, `status = open`. Закрытый заказ с плановой
+    датой до `as_of`, к которому приходы (сопоставленные, как для надёжности поставщика) пришли
+    и после `as_of`, на ту дату тоже ещё ехал — опаздывал (D18): `status = open`,
+    `qty_pending` = пришедшее с `as_of`, `qty_received` = пришедшее до. Карточки, заведённые
     после `as_of` и без продаж до неё, убираются; поля активности справочника пересчитываются.
     """
     month = pd.Period(as_of, "M")
@@ -206,6 +218,18 @@ def cut_dataset(ds: Dataset, as_of: date, partial_day: int | None = None) -> Dat
     po.loc[future, "qty_pending"] = po.loc[future, "qty_pending"] + po.loc[future, "qty_received"]
     po.loc[future, "qty_received"] = 0
     po.loc[future, "status"] = "open"
+    from .supply import CLOSED_STATUSES, _received_by_receipts  # supply импортирует data
+    window = receipt_window_days if receipt_window_days is not None else Config().reliability_receipt_window_days
+    done = ~future & po["status"].isin(CLOSED_STATUSES) & po["supplier_id"].notna()
+    if done.any():
+        # приходы разбирают все заказы поставщика по очереди даты заказа — и открытые, и с будущей
+        # плановой датой, иначе их приход достался бы старому закрытому заказу второй раз
+        before, after = _received_by_receipts(po[po["supplier_id"].notna()], ds.receipts, window, split_at=as_of)
+        after = after[done[done].index]
+        late = after[after > 0].index
+        po.loc[late, "status"] = "open"
+        po.loc[late, "qty_pending"] = after[late].astype("int64")
+        po.loc[late, "qty_received"] = before[late].astype("int64")
     sku = ds.sku
     born_later = (sku["created"].notna() & (sku["created"] > month)
                   & ~sku["sku_id"].isin(sales["sku_id"]))

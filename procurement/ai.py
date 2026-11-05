@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -25,6 +26,12 @@ TOP_N = 15
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "analyst.md"
 ENV_FILE = ".env"
 SKU_RE = re.compile(r"\bSKU-[0-9A-Za-z]+")
+CODE_RE = re.compile(r"\b(?:SKU|SUP|PO)-[0-9A-Za-z]+")   # коды SKU, поставщиков, заказов
+ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})")
+DATE_RE = re.compile(r"(?<![\d.,])(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?(?![.,]?\d)")
+MONTH_RE = re.compile(r"(?<![\d.,])(\d{1,2})\.(\d{4})(?!\d)")
+NUM_RE = re.compile(r"\d{1,3}(?:[   ]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?")
+FREE_NUM = 31  # целые до 31 (дни, месяцы, «2 позиции») не сверяются — сверяются количества и проценты
 
 # Порядок важности рисков и сколько мест в топ-15 у каждого (остаток добирается по порядку).
 RISK_ORDER = ("deficit_unavoidable", "deficit_if_late", "late_po", "excess", "low_reliability")
@@ -168,15 +175,73 @@ def _fail(error: str, model: str) -> dict:
     return {"ok": False, "markdown": "", "sku_notes": {}, "error": error, "model": model}
 
 
-def _clean(markdown: str, notes: dict, allowed: set[str]) -> tuple[str, dict]:
-    """Строки записки с SKU не из входа выбрасываются; пояснения — только к SKU из входа и только
-    такие, в тексте которых нет SKU не из входа (иначе выдуманный товар попал бы в карточку)."""
+def _to_float(token: str) -> float:
+    return float(re.sub(r"[   ]", "", token).replace(",", "."))
+
+
+def _numbers_of(value, nums: set, dates: set) -> None:
+    """Все числа и даты входа LLM: числа — как есть, округлённые до 0.1 и до целого; даты ISO —
+    (день, месяц, год), (день, месяц, None), (None, месяц, год); числа внутри строк тоже."""
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, (int, float)):
+        v = float(value)  # целое — и вниз, и вверх: 372,5 LLM пишет «373», round() даёт 372
+        nums.update({round(v, 1), float(math.floor(v)), float(math.ceil(v))})
+    elif isinstance(value, str):
+        for y, m, d in ISO_RE.findall(value):
+            dates.update({(int(d), int(m), int(y)), (int(d), int(m), None), (None, int(m), int(y))})
+            nums.add(float(int(y)))
+        for tok in NUM_RE.findall(ISO_RE.sub(" ", CODE_RE.sub(" ", value))):
+            nums.add(round(_to_float(tok), 1))
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _numbers_of(k, nums, dates)
+            _numbers_of(v, nums, dates)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _numbers_of(v, nums, dates)
+
+
+def _unknown_numbers(text: str, nums: set, dates: set) -> list[str]:
+    """Числа и даты текста, которых нет во входе; целые до `FREE_NUM` не сверяются."""
+    t = CODE_RE.sub(" ", text)
+    bad = []
+    for m in DATE_RE.finditer(t):
+        if 1 <= int(m.group(2)) <= 12:
+            key = (int(m.group(1)), int(m.group(2)), int(m.group(3)) if m.group(3) else None)
+            if key not in dates:
+                bad.append(m.group(0))
+    t = DATE_RE.sub(lambda m: " " if 1 <= int(m.group(2)) <= 12 else m.group(0), t)
+    for m in MONTH_RE.finditer(t):
+        if (None, int(m.group(1)), int(m.group(2))) not in dates:
+            bad.append(m.group(0))
+    for tok in NUM_RE.findall(MONTH_RE.sub(" ", t)):
+        x = _to_float(tok)
+        if not (x.is_integer() and x <= FREE_NUM) and round(x, 1) not in nums:
+            bad.append(tok)
+    return bad
+
+
+def _clean(markdown: str, notes: dict, allowed: set[str], source=None) -> tuple[str, dict]:
+    """Строки записки с кодами SKU, поставщиков или заказов не из входа выбрасываются; пояснения —
+    только к SKU из входа и без чужих кодов (иначе выдуманный товар попал бы в карточку).
+    `source` — вход LLM: тогда выбрасываются и строки/пояснения с числом или датой, которых во входе
+    нет, — досчитанное или выдуманное (целые до `FREE_NUM` — дни, «2 позиции» — не сверяются)."""
+    nums: set = set()
+    dates: set = set()
+    if source is not None:
+        _numbers_of(source, nums, dates)
+
+    def ok(text: str) -> bool:
+        return (set(CODE_RE.findall(text)) <= allowed
+                and (source is None or not _unknown_numbers(text, nums, dates)))
+
     lines = markdown.splitlines()
-    kept = [ln for ln in lines if set(SKU_RE.findall(ln)) <= allowed]
+    kept = [ln for ln in lines if ok(ln)]
     clean_notes = {k: str(v).strip() for k, v in notes.items()
-                   if k in allowed and isinstance(v, str) and v.strip() and set(SKU_RE.findall(v)) <= allowed}
+                   if k in allowed and isinstance(v, str) and v.strip() and ok(v)}
     if len(kept) < len(lines) or len(clean_notes) < len(notes):
-        log.info("Из ответа ИИ вычищено строк: %d, пояснений: %d (SKU не из входа).",
+        log.info("Из ответа ИИ вычищено строк: %d, пояснений: %d (коды или числа не из входа).",
                  len(lines) - len(kept), len(notes) - len(clean_notes))
     return "\n".join(kept).strip(), clean_notes
 
@@ -240,8 +305,8 @@ def analyst_note(summary: dict, cfg, cache_dir) -> dict:
     markdown, notes = data.get("markdown"), data.get("sku_notes") or {}
     if not isinstance(markdown, str) or not markdown.strip():
         return _fail("в ответе ИИ нет записки (поле markdown)", model)
-    allowed = set(SKU_RE.findall(user))
-    markdown, notes = _clean(markdown, notes if isinstance(notes, dict) else {}, allowed)
+    allowed = set(CODE_RE.findall(user))
+    markdown, notes = _clean(markdown, notes if isinstance(notes, dict) else {}, allowed, source=summary)
     note = {"ok": True, "markdown": markdown, "sku_notes": notes, "error": None, "model": model}
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(note, ensure_ascii=False, indent=1), encoding="utf-8")

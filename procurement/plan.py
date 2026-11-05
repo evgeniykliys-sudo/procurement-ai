@@ -17,8 +17,8 @@
   половины годового прогноза и округление добавляет не больше `lot_max_overage_months` мес. спроса
   (D05, D08), иначе до шага `lot_rounding` по величине заказа;
 - проекция остатка по дням (прогноз месяца — равномерно по его дням; приходы в пути — в дату
-  прихода) даёт «хватит до» (день, когда потеряно ≥ `stockout_min_lost_qty` шт. спроса; дефицит
-  неизбежен — если столько теряется до as_of + L) и «заказать до»: дата, когда остаток опустится ниже страхового
+  прихода) даёт дефицит (потеряно ≥ `stockout_min_lost_qty` шт. спроса; неизбежен — если столько
+  теряется до as_of + L), «хватит до» — первый день этого дефицита (D17) и «заказать до»: дата, когда остаток опустится ниже страхового
   (и приход уже размещённых заказов в пределах R его не поднимет или до этого прихода товар
   кончится, D14 — тогда заказ не меньше разрыва до прихода, `bridge`), − L;
 - «заказать до» ≤ дата + `review_period_days` → заказать сейчас (до следующего пересмотра
@@ -346,7 +346,7 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         has_demand = cum_dem[i, D_fc] > EPS
         dem_pos = daily[i] > EPS
 
-        # «хватит до»: первый день, к концу которого потеряно ≥ stockout_min_lost_qty шт. спроса
+        # дефицит: первый день, к концу которого потеряно ≥ stockout_min_lost_qty шт. спроса
         # (физический остаток: продажи при нуле теряются, приходы в пути его пополняют)
         stockout_t = None
         # «заказать до»: первый день t ≥ L, когда остаток ниже страхового и приходы уже
@@ -355,9 +355,17 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         # проекция для заказа — физическая (D12): продажи при нуле потеряны и до прихода заказа, и до
         # прихода партий в пути — партия в пути не уходит на погашение потерянного спроса
         proj = phys_start[i]
+        # «хватит до» (D17) — первый день того дефицита, в котором потеряно ≥ stockout_min_lost_qty шт.:
+        # у медленной позиции штука спроса теряется через недели после того, как товар кончился,
+        # а при нуле сегодня «хватит до» — сегодня, 0 дн. Риски — по дню потери штуки (stockout_t)
+        empty_t = None
         if has_demand:
             hit = np.flatnonzero(lost_cum[i] >= lost_min - EPS)
             stockout_t = int(hit[0]) if hit.size else None
+            if stockout_t is not None:
+                lost_day = np.diff(lost_cum[i, :stockout_t + 1], prepend=0.0)
+                served = np.flatnonzero(lost_day <= EPS)   # дни без потерь до дня потери штуки
+                empty_t = int(served[-1]) + 1 if served.size else 0
             cross_t = next_cross(i, proj, L)
 
         dead = dead_flag in flags
@@ -478,8 +486,8 @@ def build_plan(ds: Dataset, demand: DemandResult, cfg: Config, as_of: date) -> P
         rows.append({
             "sku_id": sid, "category": sku["category"].iloc[i], "supplier_id": sku["supplier_id"].iloc[i],
             "abc": abc[i], "status": status, "order_qty": order_qty, "order_by": order_by,
-            "stockout_date": as_of + timedelta(days=stockout_t) if stockout_t is not None else None,
-            "cover_days": stockout_t, "stock_now": int(stock[i]), "in_transit_qty": tr_total,
+            "stockout_date": as_of + timedelta(days=empty_t) if empty_t is not None else None,
+            "cover_days": empty_t, "stock_now": int(stock[i]), "in_transit_qty": tr_total,
             "next_eta": next_eta.get(sid), "lead_days": L, "lead_source": lt["lead_source"].iloc[i],
             "cover_target_days": R, "safety_stock": explain["safety"],
             "demand_horizon": _r1(cum_dem[i, min(int(horizon[i]), D)]),

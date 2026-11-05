@@ -86,12 +86,17 @@ def in_transit(ds: Dataset, cfg: Config, as_of: date) -> tuple[pd.DataFrame, pd.
     return arrivals, stale
 
 
-def _received_by_receipts(po: pd.DataFrame, receipts: pd.DataFrame, window_days: int) -> pd.Series:
+def _received_by_receipts(po: pd.DataFrame, receipts: pd.DataFrame, window_days: int,
+                          split_at: date | None = None):
     """Получено по каждому заказу — из receipts.csv (поле `qty_received` закрытых заказов ERP
     почти всегда 0, D01): приходы того же SKU от того же поставщика в окне
     [order_date; promised_date + window_days], не больше `qty_ordered`. Заказы SKU
-    разбирают приходы по очереди `order_date`; засчитанное одному заказу другому не достаётся."""
+    разбирают приходы по очереди `order_date`; засчитанное одному заказу другому не достаётся.
+
+    `split_at` — вместо одной серии пара (получено до этой даты, получено с неё): так обрезка
+    набора на прошлую дату видит, какие закрытые заказы на ту дату ещё ехали (D18)."""
     got = pd.Series(0, index=po.index, dtype="int64")
+    late = pd.Series(0, index=po.index, dtype="int64")
     rc = receipts[(receipts["qty"] > 0) & receipts["supplier_id"].notna()]
     pools = {key: g.sort_values("receipt_date", kind="stable") for key, g in rc.groupby(["sku_id", "supplier_id"])}
     window = timedelta(days=window_days)
@@ -112,8 +117,11 @@ def _received_by_receipts(po: pd.DataFrame, receipts: pd.DataFrame, window_days:
                     take = min(left[j], need)
                     left[j] -= take
                     need -= take
-                    got[idx] += take
-    return got
+                    if split_at is not None and d >= split_at:
+                        late[idx] += take
+                    else:
+                        got[idx] += take
+    return (got, late) if split_at is not None else got
 
 
 def supplier_reliability(ds: Dataset, cfg: Config, as_of: date) -> pd.DataFrame:

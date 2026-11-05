@@ -551,3 +551,15 @@ def test_zero_safety_catches_shortage_within_a_day(make_dataset):
     assert r["stockout_date"] is not None and r["stockout_date"] < date(2024, 5, 1)
     assert r["status"] in ("order_now", "order_later") and r["order_qty"] > 0
     assert r["order_by"] + timedelta(days=90) <= r["stockout_date"]  # было: заказ только на декабрь, после партии
+
+
+def test_cover_starts_when_stock_runs_out_not_when_a_unit_is_lost(make_dataset):
+    """D17: «хватит до» — первый день дефицита, а не день, когда потеряна целая штука: при нуле
+    сегодня — сегодня, 0 дн. (было: медленная позиция с нулём «хватало» на месяц); 3 шт. при 1 шт./мес
+    кончаются ≈ через 3 мес., а не через 4. Риск дефицита — по-прежнему по потере штуки."""
+    ds = build(make_dataset, sku("ZERO", qty=1, stock=0, lot_qty=10), sku("SLOW3", qty=1, stock=3, lot_qty=10))
+    plan = plan_of(ds)
+    z, s = row(plan, "ZERO"), row(plan, "SLOW3")
+    assert z["cover_days"] == 0 and z["stockout_date"] == AS_OF
+    assert "deficit_unavoidable" in z["risk"]  # до прихода (90 дн.) теряется ≈ 3 шт.
+    assert 85 <= s["cover_days"] <= 92 and s["stockout_date"] == AS_OF + timedelta(days=int(s["cover_days"]))

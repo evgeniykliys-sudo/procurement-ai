@@ -35,7 +35,8 @@ def compute_plan(raw, cfg, as_of: date | None = None) -> tuple[dict, object, obj
     if as_of > data_as_of:  # остатка и продаж на эту дату в выгрузке нет — расчёт был бы на нулях
         raise ValueError(f"дата анализа {as_of.isoformat()} позже данных выгрузки ({data_as_of.isoformat()}): "
                          "уберите as_of из config.toml или укажите дату не позже данных")
-    ds = cut_dataset(ds_full, as_of, cfg.partial_day) if as_of < data_as_of else ds_full
+    ds = (cut_dataset(ds_full, as_of, cfg.partial_day, cfg.reliability_receipt_window_days)
+          if as_of < data_as_of else ds_full)
     demand = build_demand(ds, cfg, as_of)
     plan = build_plan(ds, demand, cfg, as_of)
     return plan_to_json(plan), ds_full, cfg

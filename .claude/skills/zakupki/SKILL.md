@@ -43,7 +43,7 @@ $PY -c "import json,sys; sys.stdout.reconfigure(encoding='utf-8'); p=json.load(o
 Что в строке `items[]`:
 - `status`: `order_now` — заказать сейчас, `order_later` — позже (дата `order_by`, количество — оценка на ту дату), `ok` — не нужно, `review_price` — на пересмотр цены (низкая наценка `markup_12m` или нет себестоимости), `dead_sell` / `dead_close` — мёртвый ассортимент (распродать / вывести), `no_demand` — нет спроса.
 - `risk`: `deficit_unavoidable` — дефицит будет даже при заказе сегодня, `deficit_if_late` — будет, если опоздать, `excess` — излишек, `late_po` — заказ в пути опаздывает, `low_reliability` — поставщик недовозит.
-- `stockout_date`, `cover_days` — когда кончится и на сколько дней хватит (`None` — хватит больше чем на горизонт проекции); `stock_now`, `in_transit_qty`, `next_eta`; `lead_days` и `lead_source` (`sku` / `supplier` / `default`) — плечо поставки; `flags` — пометки («мало истории», «плечо оценочное», «упущенный спрос — проверить» и др.).
+- `stockout_date`, `cover_days` — когда кончится и на сколько дней хватит: первый день дефицита, 0 — товара нет уже сегодня (`None` — хватит больше чем на горизонт проекции); `stock_now`, `in_transit_qty`, `next_eta`; `lead_days` и `lead_source` (`sku` / `supplier` / `default`) — плечо поставки; `flags` — пометки («мало истории», «плечо оценочное», «упущенный спрос — проверить» и др.).
 
 Как читать `explain` («почему столько»):
 1. `forecast_horizon` — прогноз спроса на период, который покрывает заказ (от прихода через `lead_days` ещё на `cover_target_days`).

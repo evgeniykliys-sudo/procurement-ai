@@ -44,6 +44,7 @@ FLAG_ALL_CENSORED = "весь год без остатка"
 FLAG_LEVEL_LONG = "уровень по 24 мес"
 FLAG_LEVEL_PLAIN = "уровень без сезонной поправки"
 FLAG_CAPPED = "упущенный спрос — проверить"
+FLAG_PARTIAL_ONLY = "уровень по неполному месяцу"
 
 
 def flag_no_sales(cfg: Config) -> str:
@@ -245,6 +246,10 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
 
     rows_out, fc_rows = [], []
     days_in = calendar.monthrange(as_of.year, as_of.month)[1]
+    # продажи текущего неполного месяца (до даты анализа) — для новинки без единого полного месяца
+    cur = ds.sales[(ds.sales["month"] == month0) & (ds.sales["partial_month"] == 1)]
+    cur_qty = cur.groupby("sku_id")["qty_sold"].sum()
+    elapsed = (as_of.day - 1) / days_in
     first_share = (days_in - as_of.day + 1) / days_in
     year_end = (pd.Timestamp(as_of) + pd.DateOffset(months=LEVEL_WINDOW)).date()
     last_share = (year_end.day - 1) / calendar.monthrange(year_end.year, year_end.month)[1]
@@ -288,6 +293,14 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
             base = float(np.median(seen) if is_new else seen.mean())
             level_from_window = False
             flags.append(FLAG_LEVEL_PLAIN)
+        if np.nansum(q[i]) <= 0 and elapsed > 0 and float(cur_qty.get(sku_id, 0)) > 0:
+            # продажи только в текущем месяце (новинка или ожившая карточка): в полных месяцах 0, но спрос
+            # виден — уровень = продажи месяца до даты / доля прошедших дней (/ сезон месяца, если он
+            # не мал), а не «нет спроса»: при плече 4–6 мес. пропущенный месяц — пропущенный сезон
+            si = float(cidx[month0.month - 1])
+            base = float(cur_qty[sku_id]) / elapsed / (si if si >= min_idx else 1.0)
+            level_from_window = False
+            flags.append(FLAG_PARTIAL_ONLY)
         base = 0.0 if np.isnan(base) else base
 
         # тренд — только если уровень из обычного окна и в предыдущих 12 мес сезона достаточно
@@ -301,7 +314,7 @@ def build_demand(ds: Dataset, cfg: Config, as_of: date) -> DemandResult:
         # потолок: год прогноза ≤ N× продаж последних 12 мес (кроме новинок) — уровень уменьшается,
         # весь ряд прогноза масштабируется пропорционально, сезонная форма та же
         sales_12m = int(np.nansum(q[i, win]))
-        if history_months >= LEVEL_WINDOW:
+        if history_months >= LEVEL_WINDOW and FLAG_PARTIAL_ONLY not in flags:  # 2× нуля — не потолок
             # 12 мес от даты анализа, как «прогноз на 12 мес» в плане: остаток текущего месяца,
             # 11 следующих и дни 13-го до той же даты через год (её день — по 13-му месяцу: у
             # 29.02 это 28.02, у февраля после високосного — 28 дней, а не 29)

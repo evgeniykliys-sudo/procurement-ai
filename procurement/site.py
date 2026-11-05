@@ -540,7 +540,7 @@ def check_site_dir(out: Path) -> list[str]:
     if foreign:
         raise ValueError(f"в папке сайта {out.as_posix()} есть файлы не из прошлой сборки "
                          f"({', '.join(foreign[:5])}{' …' if len(foreign) > 5 else ''}) — сборщик их не "
-                         "удаляет; укажите новую или пустую папку, например --site site")
+                         f"удаляет; удалите папку {out.as_posix()} целиком или укажите другую: --site {out.name}_new")
     return sorted(files & known)
 
 
@@ -554,21 +554,27 @@ def build_site(plan_json: dict, diff: dict, backtest: dict, note: dict, history_
     out = Path(out_dir)
     for rel in check_site_dir(out):
         (out / rel).unlink()
-    for sub in ("data", "exports", "assets"):
-        (out / sub).mkdir(parents=True, exist_ok=True)
-    for name, data in (("plan", plan_json), ("diff", diff), ("backtest", backtest), ("note", note),
-                       ("history", history_index)):
-        (out / "data" / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    client = json.dumps(_client_data(plan_json, backtest, note, history_index), ensure_ascii=False,
-                        separators=(",", ":"))
-    (out / "data" / "data.js").write_text(f"window.PROCUREMENT_DATA = {client};\n", encoding="utf-8")
-    for f in STATIC.iterdir():
-        if f.is_file():
-            shutil.copy2(f, out / "assets" / f.name)
-    write_exports(plan_json, out / "exports")
-    html = _env().get_template("index.html.j2").render(**_view(plan_json, diff, backtest, note, history_index))
-    index = out / "index.html"
-    index.write_text(html, encoding="utf-8")
-    (out / SITE_MANIFEST).write_text(json.dumps(sorted(_files_under(out)), ensure_ascii=False, indent=0),
-                                     encoding="utf-8")
+    # после проверки и удаления в папке нет ни одного чужого файла: всё, что появится дальше, записано
+    # этой сборкой — манифест пишется и при сбое на середине, иначе следующая сборка отказала бы
+    # из-за собственного файла (новый поставщик в exports)
+    try:
+        for sub in ("data", "exports", "assets"):
+            (out / sub).mkdir(parents=True, exist_ok=True)
+        for name, data in (("plan", plan_json), ("diff", diff), ("backtest", backtest), ("note", note),
+                           ("history", history_index)):
+            (out / "data" / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        client = json.dumps(_client_data(plan_json, backtest, note, history_index), ensure_ascii=False,
+                            separators=(",", ":"))
+        (out / "data" / "data.js").write_text(f"window.PROCUREMENT_DATA = {client};\n", encoding="utf-8")
+        for f in STATIC.iterdir():
+            if f.is_file():
+                shutil.copy2(f, out / "assets" / f.name)
+        write_exports(plan_json, out / "exports")
+        html = _env().get_template("index.html.j2").render(**_view(plan_json, diff, backtest, note, history_index))
+        index = out / "index.html"
+        index.write_text(html, encoding="utf-8")
+    finally:
+        if out.is_dir():
+            (out / SITE_MANIFEST).write_text(json.dumps(sorted(_files_under(out)), ensure_ascii=False,
+                                                        indent=0), encoding="utf-8")
     return index

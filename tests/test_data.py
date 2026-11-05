@@ -175,3 +175,35 @@ def test_cut_dataset_does_not_take_lead_from_supplier_dim(make_dataset):
     cut = lead_times(cut_dataset(ds, date(2024, 8, 1)), cfg).set_index("sku_id")
     assert cut.loc["A", "lead_days"] == 90 and cut.loc["A", "lead_source"] == "sku"
     assert cut.loc["B", "lead_source"] == "default" and cut.loc["B", "lead_days"] == cfg.lead_default_days
+
+
+def test_duplicate_sku_card_is_a_data_error(make_dataset):
+    """Две карточки одного SKU — понятная ошибка с файлом и строками, а не падение pandas."""
+    raw = make_dataset.write(skus=[{"sku_id": "SKU-A"}, {"sku_id": "SKU-B"}, {"sku_id": "SKU-A"}])
+    with pytest.raises(DataError, match=r"sku_dim\.csv.*SKU-A.*строки 2, 4"):
+        load_dataset(raw)
+
+
+def test_partial_day_beyond_month_end_is_clamped(make_dataset):
+    """partial_day = 31 у неполного февраля — последний день февраля, а не ValueError."""
+    ds = make_dataset(sales=make_dataset.series("SKU-P", "2023-01", [5] * 14, partial_last=True))
+    assert detect_as_of(ds, Config(partial_day=31)) == date(2024, 2, 29)
+
+
+def test_cut_keeps_late_closed_order_in_transit(make_dataset):
+    """D18: закрытый заказ с плановой датой до среза, приход по которому пришёл после, на дату среза
+    ещё ехал (опаздывал): open, в пути — пришедшее после, получено — до."""
+    ds = make_dataset(
+        skus=[{"sku_id": "SKU-L"}],
+        sales=make_dataset.series("SKU-L", "2024-01", [10] * 6),
+        po=[{"po_id": "PO-1", "sku_id": "SKU-L", "order_date": "2024-01-10", "promised_date": "2024-04-01",
+             "status": "closed", "qty_ordered": 100, "qty_received": 0},
+            {"po_id": "PO-2", "sku_id": "SKU-L", "order_date": "2024-01-05", "promised_date": "2024-03-01",
+             "status": "closed", "qty_ordered": 50, "qty_received": 0}],
+        receipts=[{"sku_id": "SKU-L", "receipt_date": "2024-03-01", "qty": 50},
+                  {"sku_id": "SKU-L", "receipt_date": "2024-03-20", "qty": 30},
+                  {"sku_id": "SKU-L", "receipt_date": "2024-05-10", "qty": 70}])
+    cut = cut_dataset(ds, date(2024, 5, 1)).po.set_index("po_id")
+    assert cut.loc["PO-1", "status"] == "open"
+    assert cut.loc["PO-1", "qty_pending"] == 70 and cut.loc["PO-1", "qty_received"] == 30
+    assert cut.loc["PO-2", "status"] == "closed"  # получен целиком до среза
