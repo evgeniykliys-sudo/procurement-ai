@@ -1,5 +1,5 @@
 {"as_of": "2026-08-13",
-"kpi": {"skus_total": 791, "order_now_positions": 195, "order_now_qty": 34945, "order_now_suppliers": 18, "order_now_no_supplier": 3, "order_later_positions": 106, "ok": 44, "no_demand": 0, "deficit_unavoidable": 206, "deficit_unavoidable_out_now": 127, "deficit_if_late": 16, "excess": 82, "late_po": 7, "low_reliability": 67, "review_price": 115, "review_low_markup": 68, "review_no_cost": 47, "review_running_out": 51, "dead": 331, "dead_sell": 37, "dead_close": 294, "in_transit_lines": 27, "in_transit_qty": 17747, "in_transit_future_qty": 17127, "late_lines": 5, "stale_po_lines": 4, "stale_po_likely_received": 4, "low_reliability_suppliers": 3, "weak_forecast_orders": 103, "weak_forecast_categories": ["grain_mills", "sanitary_faucets"]},
+"kpi": {"skus_total": 791, "order_now_positions": 195, "order_now_qty": 34945, "order_now_suppliers": 18, "order_now_no_supplier": 3, "order_later_positions": 106, "ok": 44, "no_demand": 0, "deficit_unavoidable": 207, "deficit_unavoidable_out_now": 128, "deficit_if_late": 16, "excess": 82, "late_po": 7, "low_reliability": 67, "review_price": 115, "review_low_markup": 68, "review_no_cost": 47, "review_running_out": 52, "dead": 331, "dead_sell": 37, "dead_close": 294, "in_transit_lines": 27, "in_transit_qty": 17747, "in_transit_future_qty": 17127, "late_lines": 5, "stale_po_lines": 4, "stale_po_likely_received": 4, "low_reliability_suppliers": 3, "weak_forecast_orders": 103, "weak_forecast_categories": ["grain_mills", "sanitary_faucets"]},
 "items": [
 {"sku_id": "SKU-026A51", "status": "order_now", "order_qty": 150, "risk": ["deficit_unavoidable"], "category": "concrete_mixers", "supplier_id": "SUP-640208"},
 {"sku_id": "SKU-05126E", "status": "review_price", "order_qty": 0, "risk": ["deficit_unavoidable"], "category": "concrete_mixers", "supplier_id": "SUP-0F93EC"},
@@ -604,7 +604,7 @@
 {"sku_id": "SKU-C331F9", "status": "order_later", "order_qty": 250, "risk": [], "category": "string_trimmers", "supplier_id": "SUP-D83B73"},
 {"sku_id": "SKU-C574D6", "status": "order_now", "order_qty": 400, "risk": ["deficit_unavoidable"], "category": "string_trimmers", "supplier_id": "SUP-4E171A"},
 {"sku_id": "SKU-CAC17F", "status": "review_price", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": "SUP-D83B73"},
-{"sku_id": "SKU-CF66C4", "status": "review_price", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": null},
+{"sku_id": "SKU-CF66C4", "status": "review_price", "order_qty": 0, "risk": ["deficit_unavoidable"], "category": "string_trimmers", "supplier_id": null},
 {"sku_id": "SKU-D2F0E1", "status": "dead_close", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": null},
 {"sku_id": "SKU-D54478", "status": "dead_close", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": "SUP-4E171A"},
 {"sku_id": "SKU-E2D6A6", "status": "dead_close", "order_qty": 0, "risk": [], "category": "string_trimmers", "supplier_id": null},
